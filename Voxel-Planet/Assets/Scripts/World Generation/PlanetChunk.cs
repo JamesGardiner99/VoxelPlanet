@@ -40,7 +40,7 @@ namespace VoxelPlanet
 
         public void RebuildMesh()
         {
-            if(planet == null)
+            if (planet == null)
             {
                 Debug.LogError("Planet reference is missing for chunk " + chunkIndex);
                 return;
@@ -56,25 +56,23 @@ namespace VoxelPlanet
             List<int> triangles = new List<int>();
             List<Vector3> normals = new List<Vector3>();
 
-            foreach(int cellIndex in cellIndices)
+            foreach (int cellIndex in cellIndices)
             {
-                if(cellIndex < 0 || cellIndex >= planet.planetCells.Count)
-                {
+                if (cellIndex < 0 || cellIndex >= planet.planetCells.Count)
                     continue;
-                }
 
                 BuildCell(cellIndex, vertices, triangles, normals);
-
-                mesh.SetVertices(vertices);
-                mesh.SetTriangles(triangles, 0);
-                mesh.SetNormals(normals);
-                mesh.RecalculateBounds();
-
-                meshFilter.sharedMesh = mesh;
-
-                meshCollider.sharedMesh = null;
-                meshCollider.sharedMesh = mesh;
             }
+
+            mesh.SetVertices(vertices);
+            mesh.SetTriangles(triangles, 0);
+            mesh.SetNormals(normals);
+            mesh.RecalculateBounds();
+
+            meshFilter.sharedMesh = mesh;
+
+            meshCollider.sharedMesh = null;
+            meshCollider.sharedMesh = mesh;
         }
 
         private void BuildCell(int cellIndex, List<Vector3> vertices, List<int> triangles, List<Vector3> normals)
@@ -164,10 +162,12 @@ namespace VoxelPlanet
                 triangles.Add(wallStart + 0);
                 triangles.Add(wallStart + 1);
                 triangles.Add(wallStart + 2);
+                planet.RegisterTriangleCell(chunkIndex, cell.index);
 
                 triangles.Add(wallStart + 1);
                 triangles.Add(wallStart + 3);
                 triangles.Add(wallStart + 2);
+                planet.RegisterTriangleCell(chunkIndex, cell.index);
 
                 planet.RegisterTriangleCell(chunkIndex, cell.index);
             }

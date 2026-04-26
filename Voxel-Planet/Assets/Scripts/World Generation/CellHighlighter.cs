@@ -21,7 +21,10 @@ namespace VoxelPlanet
             lineRenderer.useWorldSpace = true;
             lineRenderer.startWidth = lineWidth;
             lineRenderer.endWidth = lineWidth;
-            lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+
+            // Better: no runtime material leak
+            lineRenderer.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
+
             lineRenderer.startColor = Color.black;
             lineRenderer.endColor = Color.black;
         }
@@ -35,6 +38,12 @@ namespace VoxelPlanet
             }
 
             var cell = planet.planetCells[cellIndex];
+
+            if (cell.corners == null || cell.corners.Count == 0)
+            {
+                lineRenderer.positionCount = 0;
+                return;
+            }
 
             float heightOffset = cell.heightLevel * planet.cellHeightStep;
 

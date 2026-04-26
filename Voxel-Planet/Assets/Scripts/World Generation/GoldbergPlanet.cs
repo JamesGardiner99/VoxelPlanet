@@ -56,7 +56,7 @@ namespace VoxelPlanet
         [Header("Render Distance")]
         public Transform viewer;
         public float renderDistance = 80f;
-        public float renderCheckinterval = 0.25f;
+        public float renderCheckInterval = 0.25f;
 
         private float renderCheckTimer;
 
@@ -96,7 +96,7 @@ namespace VoxelPlanet
             if (renderCheckTimer > 0f)
                 return;
 
-            renderCheckTimer = renderCheckinterval;
+            renderCheckTimer = renderCheckInterval;
             UpdateChunkVisibility();
         }
 
@@ -107,7 +107,9 @@ namespace VoxelPlanet
 
             CreateIcosahedron(icoVertices, icoTriangles);
 
-            rootFaceRegions = BuildRootFaceRegions(icoVertices, icoTriangles);
+            List<int> rootTriangles = new List<int>(icoTriangles);
+
+            rootFaceRegions = BuildRootFaceRegions(icoVertices, rootTriangles);
 
             for (int i = 0; i < subdivisions; i++)
                 Subdivide(icoVertices, icoTriangles);

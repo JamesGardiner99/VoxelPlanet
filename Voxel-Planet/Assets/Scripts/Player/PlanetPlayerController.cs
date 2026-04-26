@@ -28,6 +28,7 @@ namespace VoxelPlanet
         private CapsuleCollider capsule;
 
         private float xRotation;
+        private float mouseXInput;
         private float moveX;
         private float moveZ;
         private bool jumpRequested;
@@ -77,16 +78,22 @@ namespace VoxelPlanet
 
         private void AlignToPlanet(Vector3 gravityUp)
         {
-            Quaternion targetRotation =
+            // Align to planet surface
+            Quaternion alignRotation =
                 Quaternion.FromToRotation(transform.up, gravityUp) * rb.rotation;
 
-            Quaternion newRotation = Quaternion.Slerp(
-                rb.rotation,
-                targetRotation,
-                10f * Time.fixedDeltaTime
-            );
+            // Apply mouse yaw (horizontal rotation)
+            Quaternion yawRotation =
+                Quaternion.AngleAxis(mouseXInput, gravityUp);
 
-            rb.MoveRotation(newRotation);
+            Quaternion finalRotation =
+                yawRotation * alignRotation;
+
+            rb.MoveRotation(Quaternion.Slerp(
+                rb.rotation,
+                finalRotation,
+                10f * Time.fixedDeltaTime
+            ));
         }
 
         private void ApplyMovement(Vector3 gravityUp)
@@ -161,7 +168,7 @@ namespace VoxelPlanet
             float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity * Time.deltaTime;
             float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity * Time.deltaTime;
 
-            rb.MoveRotation(Quaternion.AngleAxis(mouseX, gravityUp) * rb.rotation);
+            mouseXInput = mouseX;
 
             xRotation -= mouseY;
             xRotation = Mathf.Clamp(xRotation, -maxLookAngle, maxLookAngle);

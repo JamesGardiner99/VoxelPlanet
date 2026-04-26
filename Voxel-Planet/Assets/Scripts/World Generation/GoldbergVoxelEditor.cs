@@ -78,7 +78,11 @@ namespace VoxelPlanet
             else
                 planet.LowerCell(cellIndex);
 
-            currentHighlightedCell = -1;
+            currentHighlightedCell = cellIndex;
+            
+            if(cellHighlighter != null)
+                cellHighlighter.HighlightCell(cellIndex);
+
             UpdateHighlightedCell();
         }
     }
