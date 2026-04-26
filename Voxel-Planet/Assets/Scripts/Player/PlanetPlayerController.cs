@@ -168,7 +168,7 @@ namespace VoxelPlanet
             float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity * Time.deltaTime;
             float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity * Time.deltaTime;
 
-            mouseXInput = mouseX;
+            rb.MoveRotation(Quaternion.AngleAxis(mouseX, gravityUp) * rb.rotation);
 
             xRotation -= mouseY;
             xRotation = Mathf.Clamp(xRotation, -maxLookAngle, maxLookAngle);

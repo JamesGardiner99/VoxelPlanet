@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Rendering;
 
 namespace VoxelPlanet
 {
@@ -12,16 +11,28 @@ namespace VoxelPlanet
             Hexagon
         }
 
+        public enum BlockType
+        {
+            Air,
+            Grass,
+            Dirt,
+            Stone
+        }
+
         public class PlanetCell
         {
             public int index;
             public int chunkIndex;
             public CellType type;
+
             public Vector3 center;
             public Vector3 normal;
+
             public List<Vector3> corners = new List<Vector3>();
             public List<int> neighbours = new List<int>();
-            public int heightLevel = 0;
+
+            // Missing layer = Air
+            public Dictionary<int, BlockType> blocks = new Dictionary<int, BlockType>();
         }
 
         private class CellCorner
@@ -41,6 +52,7 @@ namespace VoxelPlanet
             public Vector3 center;
             public Vector3 tangent;
             public Vector3 bitangent;
+
             public float minU;
             public float maxU;
             public float minV;
@@ -66,13 +78,13 @@ namespace VoxelPlanet
 
         private int TotalChunkCount => 20 * chunksPerRootFaceSide * chunksPerRootFaceSide;
 
-        [Header("Voxel Editing")]
-        public float cellHeightStep = 0.5f;
-        public int minHeightLevel = 0;
-        public int maxHeightLevel = 5;
+        [Header("Voxel Blocks")]
+        public float blockHeight = 0.5f;
 
         [Header("Material")]
-        public Material planetMaterial;
+        public Material grassMaterial;
+        public Material dirtMaterial;
+        public Material stoneMaterial;
 
         public List<PlanetCell> planetCells = new List<PlanetCell>();
 
@@ -80,7 +92,7 @@ namespace VoxelPlanet
         private readonly Dictionary<int, List<int>> triangleToCellByChunk = new Dictionary<int, List<int>>();
 
         private List<RootFaceRegion> rootFaceRegions = new List<RootFaceRegion>();
- 
+
         private void Awake()
         {
             GeneratePlanet();
@@ -88,7 +100,7 @@ namespace VoxelPlanet
 
         private void Update()
         {
-            if(viewer == null)
+            if (viewer == null)
                 return;
 
             renderCheckTimer -= Time.deltaTime;
@@ -107,8 +119,8 @@ namespace VoxelPlanet
 
             CreateIcosahedron(icoVertices, icoTriangles);
 
+            // Important: root chunk regions must come from the original 20 faces
             List<int> rootTriangles = new List<int>(icoTriangles);
-
             rootFaceRegions = BuildRootFaceRegions(icoVertices, rootTriangles);
 
             for (int i = 0; i < subdivisions; i++)
@@ -155,7 +167,11 @@ namespace VoxelPlanet
             return regions;
         }
 
-        private Vector2 ProjectToRootFace(Vector3 point, Vector3 center, Vector3 tangent, Vector3 bitangent)
+        private Vector2 ProjectToRootFace(
+            Vector3 point,
+            Vector3 center,
+            Vector3 tangent,
+            Vector3 bitangent)
         {
             Vector3 offset = Vector3.ProjectOnPlane(point - center, center);
 
@@ -183,7 +199,7 @@ namespace VoxelPlanet
                 chunkObject.layer = gameObject.layer;
 
                 PlanetChunk chunk = chunkObject.AddComponent<PlanetChunk>();
-                chunk.Initialise(this, i, planetMaterial);
+                chunk.Initialise(this, i);
 
                 chunks.Add(chunk);
                 triangleToCellByChunk[i] = new List<int>();
@@ -231,19 +247,19 @@ namespace VoxelPlanet
             foreach (int chunkIndex in chunksToRebuild)
                 RebuildChunk(chunkIndex);
         }
-        
+
         private void UpdateChunkVisibility()
         {
             float renderDistanceSqr = renderDistance * renderDistance;
 
-            foreach(PlanetChunk chunk in chunks)
+            foreach (PlanetChunk chunk in chunks)
             {
                 if (chunk == null)
                     continue;
 
-                float distanceSqr =  chunk.GetDistanceSqrToPoint(viewer.position);
+                float distanceSqr = chunk.GetDistanceSqrToPoint(viewer.position);
                 bool shouldBeVisible = distanceSqr <= renderDistanceSqr;
-                
+
                 chunk.SetVisible(shouldBeVisible);
             }
         }
@@ -278,15 +294,51 @@ namespace VoxelPlanet
             return mappings[triangleIndex];
         }
 
+        public bool HasBlock(int cellIndex, int layer)
+        {
+            if (cellIndex < 0 || cellIndex >= planetCells.Count)
+                return false;
+
+            return planetCells[cellIndex].blocks.ContainsKey(layer);
+        }
+
+        public BlockType GetBlock(int cellIndex, int layer)
+        {
+            if (!HasBlock(cellIndex, layer))
+                return BlockType.Air;
+
+            return planetCells[cellIndex].blocks[layer];
+        }
+
+        public int GetHighestSolidLayer(int cellIndex)
+        {
+            if (cellIndex < 0 || cellIndex >= planetCells.Count)
+                return int.MinValue;
+
+            int highest = int.MinValue;
+
+            foreach (int layer in planetCells[cellIndex].blocks.Keys)
+            {
+                if (layer > highest)
+                    highest = layer;
+            }
+
+            return highest;
+        }
+
         public void RaiseCell(int cellIndex)
         {
             if (cellIndex < 0 || cellIndex >= planetCells.Count)
                 return;
 
-            planetCells[cellIndex].heightLevel = Mathf.Min(
-                planetCells[cellIndex].heightLevel + 1,
-                maxHeightLevel
-            );
+            int highestLayer = GetHighestSolidLayer(cellIndex);
+
+            if (highestLayer == int.MinValue)
+                highestLayer = -1;
+
+            int newLayer = highestLayer + 1;
+
+            planetCells[cellIndex].blocks[newLayer] = BlockType.Grass;
 
             RebuildCellAndNeighbourChunks(cellIndex);
         }
@@ -296,10 +348,12 @@ namespace VoxelPlanet
             if (cellIndex < 0 || cellIndex >= planetCells.Count)
                 return;
 
-            planetCells[cellIndex].heightLevel = Mathf.Max(
-                planetCells[cellIndex].heightLevel - 1,
-                minHeightLevel
-            );
+            int highestLayer = GetHighestSolidLayer(cellIndex);
+
+            if (highestLayer == int.MinValue)
+                return;
+
+            planetCells[cellIndex].blocks.Remove(highestLayer);
 
             RebuildCellAndNeighbourChunks(cellIndex);
         }
@@ -364,8 +418,21 @@ namespace VoxelPlanet
 
                 cell.type = cell.corners.Count == 5 ? CellType.Pentagon : CellType.Hexagon;
 
+                GenerateInitialBlocks(cell);
+
                 planetCells.Add(cell);
             }
+        }
+
+        private void GenerateInitialBlocks(PlanetCell cell)
+        {
+            cell.blocks.Clear();
+
+            cell.blocks[0] = BlockType.Grass;
+            cell.blocks[-1] = BlockType.Dirt;
+            cell.blocks[-2] = BlockType.Dirt;
+            cell.blocks[-3] = BlockType.Stone;
+            cell.blocks[-4] = BlockType.Stone;
         }
 
         private int GetChunkIndexForCell(Vector3 normal)
@@ -534,7 +601,11 @@ namespace VoxelPlanet
             triangles.AddRange(newTriangles);
         }
 
-        private int GetMidpoint(int indexA, int indexB, List<Vector3> vertices, Dictionary<long, int> cache)
+        private int GetMidpoint(
+            int indexA,
+            int indexB,
+            List<Vector3> vertices,
+            Dictionary<long, int> cache)
         {
             long key = GetEdgeKey(indexA, indexB);
 
@@ -577,7 +648,11 @@ namespace VoxelPlanet
 
                 PlanetCell cell = planetCells[cellIndex];
 
-                float heightOffset = cell.heightLevel * cellHeightStep;
+                int highestLayer = GetHighestSolidLayer(cellIndex);
+                float heightOffset = highestLayer == int.MinValue
+                    ? 0f
+                    : highestLayer * blockHeight;
+
                 Vector3 cellTopCenter = cell.center + cell.normal * heightOffset;
 
                 float distance = Vector3.SqrMagnitude(localHitPoint - cellTopCenter);
@@ -590,6 +665,42 @@ namespace VoxelPlanet
             }
 
             return bestCellIndex;
+        }
+
+        public Material GetMaterialForBlock(BlockType blockType)
+        {
+            switch (blockType)
+            {
+                case BlockType.Grass:
+                    return grassMaterial;
+
+                case BlockType.Dirt:
+                    return dirtMaterial;
+
+                case BlockType.Stone:
+                    return stoneMaterial;
+
+                default:
+                    return grassMaterial;
+            }
+        }
+
+        public int GetMaterialIndex(BlockType blockType)
+        {
+            switch (blockType)
+            {
+                case BlockType.Grass:
+                    return 0;
+
+                case BlockType.Dirt:
+                    return 1;
+
+                case BlockType.Stone:
+                    return 2;
+
+                default:
+                    return 0;
+            }
         }
     }
 }

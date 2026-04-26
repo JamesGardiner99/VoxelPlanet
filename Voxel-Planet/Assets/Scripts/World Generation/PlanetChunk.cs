@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -16,35 +15,34 @@ namespace VoxelPlanet
         private MeshCollider meshCollider;
         private MeshRenderer meshRenderer;
 
-        public void Awake()
+        private void Awake()
         {
             meshFilter = GetComponent<MeshFilter>();
             meshCollider = GetComponent<MeshCollider>();
             meshRenderer = GetComponent<MeshRenderer>();
-        } 
+        }
 
-        public void Initialise(GoldbergPlanet owner, int index, Material material)
+        public void Initialise(GoldbergPlanet owner, int index)
         {
             planet = owner;
             chunkIndex = index;
-            
+
             meshFilter = GetComponent<MeshFilter>();
             meshCollider = GetComponent<MeshCollider>();
             meshRenderer = GetComponent<MeshRenderer>();
 
-            if(material != null)
+            meshRenderer.sharedMaterials = new Material[]
             {
-                meshRenderer.sharedMaterial = material;
-            }
+                planet.grassMaterial,
+                planet.dirtMaterial,
+                planet.stoneMaterial
+            };
         }
 
         public void RebuildMesh()
         {
             if (planet == null)
-            {
-                Debug.LogError("Planet reference is missing for chunk " + chunkIndex);
                 return;
-            }
 
             planet.ClearTriangleMappings(chunkIndex);
 
@@ -53,20 +51,31 @@ namespace VoxelPlanet
             mesh.indexFormat = IndexFormat.UInt32;
 
             List<Vector3> vertices = new List<Vector3>();
-            List<int> triangles = new List<int>();
             List<Vector3> normals = new List<Vector3>();
+
+            List<int>[] trianglesByMaterial =
+            {
+                new List<int>(),
+                new List<int>(),
+                new List<int>()
+            };
 
             foreach (int cellIndex in cellIndices)
             {
                 if (cellIndex < 0 || cellIndex >= planet.planetCells.Count)
                     continue;
 
-                BuildCell(cellIndex, vertices, triangles, normals);
+                BuildCell(cellIndex, vertices, trianglesByMaterial, normals);
             }
 
             mesh.SetVertices(vertices);
-            mesh.SetTriangles(triangles, 0);
             mesh.SetNormals(normals);
+            mesh.subMeshCount = 3;
+
+            mesh.SetTriangles(trianglesByMaterial[0], 0);
+            mesh.SetTriangles(trianglesByMaterial[1], 1);
+            mesh.SetTriangles(trianglesByMaterial[2], 2);
+
             mesh.RecalculateBounds();
 
             meshFilter.sharedMesh = mesh;
@@ -75,146 +84,234 @@ namespace VoxelPlanet
             meshCollider.sharedMesh = mesh;
         }
 
-        private void BuildCell(int cellIndex, List<Vector3> vertices, List<int> triangles, List<Vector3> normals)
+        private void BuildCell(
+            int cellIndex,
+            List<Vector3> vertices,
+            List<int>[] trianglesByMaterial,
+            List<Vector3> normals)
         {
             GoldbergPlanet.PlanetCell cell = planet.planetCells[cellIndex];
 
-            float heightOffset = cell.heightLevel * planet.cellHeightStep;
+            foreach (var blockPair in cell.blocks)
+            {
+                int layer = blockPair.Key;
+                GoldbergPlanet.BlockType blockType = blockPair.Value;
 
-            Vector3 topCenter = cell.center + cell.normal * heightOffset;
+                if (blockType == GoldbergPlanet.BlockType.Air)
+                    continue;
+
+                BuildBlock(
+                    cellIndex,
+                    cell,
+                    layer,
+                    blockType,
+                    vertices,
+                    trianglesByMaterial,
+                    normals
+                );
+            }
+        }
+
+        private void BuildBlock(
+            int cellIndex,
+            GoldbergPlanet.PlanetCell cell,
+            int layer,
+            GoldbergPlanet.BlockType blockType,
+            List<Vector3> vertices,
+            List<int>[] trianglesByMaterial,
+            List<Vector3> normals)
+        {
+            int materialIndex = planet.GetMaterialIndex(blockType);
+
+            float bottomOffset = layer * planet.blockHeight;
+            float topOffset = (layer + 1) * planet.blockHeight;
+
+            List<Vector3> bottomCorners = new List<Vector3>();
             List<Vector3> topCorners = new List<Vector3>();
 
-            for(int i = 0; i < cell.corners.Count; i++)
+            for (int i = 0; i < cell.corners.Count; i++)
             {
                 Vector3 cornerNormal = cell.corners[i].normalized;
-                Vector3 topCorner = cell.corners[i] + cornerNormal * heightOffset;
-                topCorners.Add(topCorner);
+
+                bottomCorners.Add(cell.corners[i] + cornerNormal * bottomOffset);
+                topCorners.Add(cell.corners[i] + cornerNormal * topOffset);
             }
 
-            //Top face
-            int topCenterIndex = vertices.Count;
-            vertices.Add(topCenter);
-            normals.Add(topCenter.normalized);
+            Vector3 bottomCenter = cell.center + cell.normal * bottomOffset;
+            Vector3 topCenter = cell.center + cell.normal * topOffset;
 
-            int topStartIndex = vertices.Count;
-
-            for(int i = 0; i < topCorners.Count; i++)
+            if (!planet.HasBlock(cellIndex, layer + 1))
             {
-                vertices.Add(topCorners[i]);
-                normals.Add(topCorners[i].normalized);
+                AddPolygonFace(
+                    topCenter,
+                    topCorners,
+                    cell.normal,
+                    cellIndex,
+                    materialIndex,
+                    vertices,
+                    trianglesByMaterial,
+                    normals
+                );
             }
 
-            for(int i = 0; i < topCorners.Count; i++)
+            if (!planet.HasBlock(cellIndex, layer - 1))
             {
-                int current = topStartIndex + i;
-                int next = topStartIndex + ((i + 1) % topCorners.Count);
+                List<Vector3> reversedBottomCorners = new List<Vector3>(bottomCorners);
+                reversedBottomCorners.Reverse();
 
-                triangles.Add(topCenterIndex);
-                triangles.Add(current);
-                triangles.Add(next);
-
-                planet.RegisterTriangleCell(chunkIndex, cell.index);
+                AddPolygonFace(
+                    bottomCenter,
+                    reversedBottomCorners,
+                    -cell.normal,
+                    cellIndex,
+                    materialIndex,
+                    vertices,
+                    trianglesByMaterial,
+                    normals
+                );
             }
 
-            //Smart side walls
-            for(int i = 0; i < cell.corners.Count; i++)
+            for (int i = 0; i < cell.corners.Count; i++)
             {
                 int neighbourIndex = cell.neighbours[i];
-                int neighbourHeightLevel = planet.minHeightLevel;
 
-                if(neighbourIndex >= 0 && neighbourIndex < planet.planetCells.Count)
-                {
-                    neighbourHeightLevel = planet.planetCells[neighbourIndex].heightLevel;
-                }
+                bool neighbourHasBlock =
+                    neighbourIndex >= 0 &&
+                    neighbourIndex < planet.planetCells.Count &&
+                    planet.HasBlock(neighbourIndex, layer);
 
-                if(cell.heightLevel <= neighbourHeightLevel)
-                {
+                if (neighbourHasBlock)
                     continue;
-                }
 
-                float lowerOffset = neighbourHeightLevel * planet.cellHeightStep;
-                float upperOffset = cell.heightLevel * planet.cellHeightStep;
+                Vector3 bottomA = bottomCorners[i];
+                Vector3 bottomB = bottomCorners[(i + 1) % bottomCorners.Count];
 
-                Vector3 cornerA = cell.corners[i];
-                Vector3 cornerB = cell.corners[(i + 1) % cell.corners.Count];
+                Vector3 topA = topCorners[i];
+                Vector3 topB = topCorners[(i + 1) % topCorners.Count];
 
-                Vector3 normalA = cornerA.normalized;
-                Vector3 normalB = cornerB.normalized;
-
-                Vector3 bottomA = cornerA + normalA * lowerOffset;
-                Vector3 bottomB = cornerB + normalB * lowerOffset;
-
-                Vector3 topA = cornerA + normalA * upperOffset;
-                Vector3 topB = cornerB + normalB * upperOffset;
-
-                int wallStart = vertices.Count;
-
-                vertices.Add(bottomA);
-                vertices.Add(bottomB);
-                vertices.Add(topA);
-                vertices.Add(topB);
-
-                normals.Add(bottomA.normalized);
-                normals.Add(bottomB.normalized);
-                normals.Add(topA.normalized);
-                normals.Add(topB.normalized);
-
-                triangles.Add(wallStart + 0);
-                triangles.Add(wallStart + 1);
-                triangles.Add(wallStart + 2);
-                planet.RegisterTriangleCell(chunkIndex, cell.index);
-
-                triangles.Add(wallStart + 1);
-                triangles.Add(wallStart + 3);
-                triangles.Add(wallStart + 2);
-                planet.RegisterTriangleCell(chunkIndex, cell.index);
-
-                planet.RegisterTriangleCell(chunkIndex, cell.index);
+                AddQuadFace(
+                    bottomA,
+                    bottomB,
+                    topA,
+                    topB,
+                    cellIndex,
+                    materialIndex,
+                    vertices,
+                    trianglesByMaterial,
+                    normals
+                );
             }
+        }
+
+        private void AddPolygonFace(
+            Vector3 center,
+            List<Vector3> corners,
+            Vector3 normal,
+            int cellIndex,
+            int materialIndex,
+            List<Vector3> vertices,
+            List<int>[] trianglesByMaterial,
+            List<Vector3> normals)
+        {
+            int centerIndex = vertices.Count;
+
+            vertices.Add(center);
+            normals.Add(normal.normalized);
+
+            int startIndex = vertices.Count;
+
+            for (int i = 0; i < corners.Count; i++)
+            {
+                vertices.Add(corners[i]);
+                normals.Add(normal.normalized);
+            }
+
+            for (int i = 0; i < corners.Count; i++)
+            {
+                int current = startIndex + i;
+                int next = startIndex + ((i + 1) % corners.Count);
+
+                trianglesByMaterial[materialIndex].Add(centerIndex);
+                trianglesByMaterial[materialIndex].Add(current);
+                trianglesByMaterial[materialIndex].Add(next);
+
+                planet.RegisterTriangleCell(chunkIndex, cellIndex);
+            }
+        }
+
+        private void AddQuadFace(
+            Vector3 bottomA,
+            Vector3 bottomB,
+            Vector3 topA,
+            Vector3 topB,
+            int cellIndex,
+            int materialIndex,
+            List<Vector3> vertices,
+            List<int>[] trianglesByMaterial,
+            List<Vector3> normals)
+        {
+            int start = vertices.Count;
+
+            vertices.Add(bottomA);
+            vertices.Add(bottomB);
+            vertices.Add(topA);
+            vertices.Add(topB);
+
+            Vector3 faceNormal = Vector3.Cross(bottomB - bottomA, topA - bottomA).normalized;
+
+            normals.Add(faceNormal);
+            normals.Add(faceNormal);
+            normals.Add(faceNormal);
+            normals.Add(faceNormal);
+
+            trianglesByMaterial[materialIndex].Add(start + 0);
+            trianglesByMaterial[materialIndex].Add(start + 1);
+            trianglesByMaterial[materialIndex].Add(start + 2);
+            planet.RegisterTriangleCell(chunkIndex, cellIndex);
+
+            trianglesByMaterial[materialIndex].Add(start + 1);
+            trianglesByMaterial[materialIndex].Add(start + 3);
+            trianglesByMaterial[materialIndex].Add(start + 2);
+            planet.RegisterTriangleCell(chunkIndex, cellIndex);
         }
 
         public Vector3 GetChunkCenterWorld()
         {
-            if(cellIndices.Count == 0 || planet == null)
-            {
+            if (cellIndices.Count == 0 || planet == null)
                 return transform.position;
-            }
 
             Vector3 center = Vector3.zero;
+            int validCount = 0;
 
-            foreach(int cellIndex in cellIndices)
+            foreach (int cellIndex in cellIndices)
             {
-                if(cellIndex < 0 || cellIndex >= planet.planetCells.Count)
-                {
+                if (cellIndex < 0 || cellIndex >= planet.planetCells.Count)
                     continue;
-                }
 
                 center += planet.planetCells[cellIndex].center;
+                validCount++;
             }
 
-            center /= cellIndices.Count;
+            if (validCount == 0)
+                return transform.position;
+
+            center /= validCount;
             return planet.transform.TransformPoint(center);
         }
 
         public void SetVisible(bool isVisible)
         {
-            if(meshRenderer != null)
-            {
+            if (meshRenderer != null)
                 meshRenderer.enabled = isVisible;
-            }
 
-            if(meshCollider != null)
-            {
+            if (meshCollider != null)
                 meshCollider.enabled = isVisible;
-            }
         }
 
         public float GetDistanceSqrToPoint(Vector3 point)
         {
-            if(meshRenderer == null || meshRenderer.sharedMaterial == null)
-            {
+            if (meshRenderer == null)
                 return float.MaxValue;
-            }
 
             Vector3 closestPoint = meshRenderer.bounds.ClosestPoint(point);
             return (closestPoint - point).sqrMagnitude;

@@ -9,7 +9,7 @@ namespace VoxelPlanet
 
         [Header("Style")]
         public float lineWidth = 0.05f;
-        public float surfaceOffset = 0.2f;
+        public float surfaceOffset = 0.05f;
 
         private LineRenderer lineRenderer;
 
@@ -21,10 +21,7 @@ namespace VoxelPlanet
             lineRenderer.useWorldSpace = true;
             lineRenderer.startWidth = lineWidth;
             lineRenderer.endWidth = lineWidth;
-
-            // Better: no runtime material leak
             lineRenderer.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
-
             lineRenderer.startColor = Color.black;
             lineRenderer.endColor = Color.black;
         }
@@ -45,14 +42,22 @@ namespace VoxelPlanet
                 return;
             }
 
-            float heightOffset = cell.heightLevel * planet.cellHeightStep;
+            int highestLayer = planet.GetHighestSolidLayer(cellIndex);
+
+            if (highestLayer == int.MinValue)
+            {
+                lineRenderer.positionCount = 0;
+                return;
+            }
+
+            float topOffset = (highestLayer + 1) * planet.blockHeight;
 
             lineRenderer.positionCount = cell.corners.Count;
 
             for (int i = 0; i < cell.corners.Count; i++)
             {
                 Vector3 normal = cell.corners[i].normalized;
-                Vector3 point = cell.corners[i] + normal * (heightOffset + surfaceOffset);
+                Vector3 point = cell.corners[i] + normal * (topOffset + surfaceOffset);
 
                 lineRenderer.SetPosition(i, point);
             }
