@@ -1,0 +1,83 @@
+#pragma kernel CSMain
+
+struct CellInput
+{
+    float3 normal;
+};
+
+struct TerrainOutput
+{
+    int surfaceLayer;
+};
+
+StructuredBuffer<CellInput> _Cells;
+RWStructuredBuffer<TerrainOutput> _Results;
+
+int _CellCount;
+float _HeightAmplitude;
+float _NoiseScale;
+float _Seed;
+
+float _ContinentScale;
+float _ContinentStrength;
+float _DetailScale;
+float _DetailStrength;
+
+float Hash(float3 p)
+{
+    p = frac(p * 0.3183099 + float3(_Seed, _Seed, _Seed));
+    p *= 17.0;
+    return frac(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float Noise(float3 p)
+{
+    float3 i = floor(p);
+    float3 f = frac(p);
+
+    float n000 = Hash(i + float3(0, 0, 0));
+    float n100 = Hash(i + float3(1, 0, 0));
+    float n010 = Hash(i + float3(0, 1, 0));
+    float n110 = Hash(i + float3(1, 1, 0));
+    float n001 = Hash(i + float3(0, 0, 1));
+    float n101 = Hash(i + float3(1, 0, 1));
+    float n011 = Hash(i + float3(0, 1, 1));
+    float n111 = Hash(i + float3(1, 1, 1));
+
+    float3 u = f * f * (3.0 - 2.0 * f);
+
+    float nx00 = lerp(n000, n100, u.x);
+    float nx10 = lerp(n010, n110, u.x);
+    float nx01 = lerp(n001, n101, u.x);
+    float nx11 = lerp(n011, n111, u.x);
+
+    float nxy0 = lerp(nx00, nx10, u.y);
+    float nxy1 = lerp(nx01, nx11, u.y);
+
+    return lerp(nxy0, nxy1, u.z);
+}
+
+[numthreads(64, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+
+    if (index >= (uint)_CellCount)
+        return;
+
+    float3 n = normalize(_Cells[index].normal);
+
+    float continent = Noise(n * _ContinentScale);
+    continent = continent * 2.0 - 1.0;
+
+    float detail = Noise(n * _DetailScale);
+    detail = detail * 2.0 - 1.0;
+
+    float height =
+        continent * _ContinentStrength +
+        detail * _DetailStrength;
+
+    int surfaceLayer = (int)round(height);
+
+    _Results[index].surfaceLayer = surfaceLayer;
+}

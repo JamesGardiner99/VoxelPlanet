@@ -329,6 +329,10 @@ MonoBehaviour:
   jumpForce: 8
   gravityStrength: 20
   acceleration: 25
+  isFlying: 0
+  flySpeed: 30
+  flyAcceleration: 30
+  doubleTapTime: 0.3
   groundCheckDistance: 0.2
   groundMask:
     serializedVersion: 2
@@ -578,15 +582,28 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   radius: 150
-  subdivisions: 4
+  subdivisions: 6
   viewer: {fileID: 652049211}
-  renderDistance: 150
   renderCheckInterval: 0.25
-  chunksPerRootFaceSide: 4
-  cellHeightStep: 0.5
-  minHeightLevel: 0
-  maxHeightLevel: 5
-  planetMaterial: {fileID: 2100000, guid: a5152b45108da8b4f805fcb194c1d676, type: 2}
+  initialChunkPoolSize: 64
+  loadDistance: 180
+  unloadDistance: 220
+  maxChunkLoadsPerTick: 4
+  chunksPerRootFaceSide: 6
+  blockHeight: 0.5
+  grassMaterial: {fileID: 2100000, guid: c1fd058ba211db54e9b74237aa55dbb2, type: 2}
+  dirtMaterial: {fileID: 2100000, guid: 1ff209d7759b7a44da04f6876c121c8d, type: 2}
+  stoneMaterial: {fileID: 2100000, guid: fae7f2fa43d0e844281d1f94ed00adb9, type: 2}
+  waterMaterial: {fileID: 0}
+  terrainCompute: {fileID: 7200000, guid: f62be210d95abd147a6beaf631d34edb, type: 3}
+  terrainHeightAmplitude: 4
+  terrainNoiseScale: 3
+  terrainSeed: 12345
+  continentScale: 1.2
+  continentStrength: 8
+  detailScale: 8
+  detailStrength: 2
+  oceanLevel: -7
 --- !u!4 &1384740438
 Transform:
   m_ObjectHideFlags: 0

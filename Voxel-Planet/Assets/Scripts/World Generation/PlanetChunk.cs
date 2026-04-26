@@ -15,6 +15,10 @@ namespace VoxelPlanet
         private MeshCollider meshCollider;
         private MeshRenderer meshRenderer;
 
+        private GameObject waterObject;
+        private MeshFilter waterMeshFilter;
+        private MeshRenderer waterMeshRenderer;
+
         private void Awake()
         {
             meshFilter = GetComponent<MeshFilter>();
@@ -22,10 +26,9 @@ namespace VoxelPlanet
             meshRenderer = GetComponent<MeshRenderer>();
         }
 
-        public void Initialise(GoldbergPlanet owner, int index)
+        public void Initialise(GoldbergPlanet owner)
         {
             planet = owner;
-            chunkIndex = index;
 
             meshFilter = GetComponent<MeshFilter>();
             meshCollider = GetComponent<MeshCollider>();
@@ -37,6 +40,46 @@ namespace VoxelPlanet
                 planet.dirtMaterial,
                 planet.stoneMaterial
             };
+
+            if (waterObject == null)
+            {
+                waterObject = new GameObject("Water Mesh");
+                waterObject.transform.SetParent(transform, false);
+
+                waterMeshFilter = waterObject.AddComponent<MeshFilter>();
+                waterMeshRenderer = waterObject.AddComponent<MeshRenderer>();
+            }
+
+            waterMeshRenderer.sharedMaterial = planet.waterMaterial;
+        }
+
+        public void AssignChunk(int newChunkIndex, List<int> newCellIndices)
+        {
+            chunkIndex = newChunkIndex;
+
+            cellIndices.Clear();
+            cellIndices.AddRange(newCellIndices);
+
+            gameObject.name = $"Planet Chunk {chunkIndex}";
+            gameObject.SetActive(true);
+
+            RebuildMesh();
+        }
+
+        public void ClearChunk()
+        {
+            cellIndices.Clear();
+
+            if (meshFilter != null)
+                meshFilter.sharedMesh = null;
+
+            if (meshCollider != null)
+                meshCollider.sharedMesh = null;
+
+            if (waterMeshFilter != null)
+                waterMeshFilter.sharedMesh = null;
+
+            gameObject.SetActive(false);
         }
 
         public void RebuildMesh()
@@ -44,51 +87,90 @@ namespace VoxelPlanet
             if (planet == null)
                 return;
 
-            planet.ClearTriangleMappings(chunkIndex);
+            List<Vector3> terrainVertices = new List<Vector3>();
+            List<Vector3> terrainNormals = new List<Vector3>();
 
-            Mesh mesh = new Mesh();
-            mesh.name = $"Planet Chunk {chunkIndex}";
-            mesh.indexFormat = IndexFormat.UInt32;
-
-            List<Vector3> vertices = new List<Vector3>();
-            List<Vector3> normals = new List<Vector3>();
-
-            List<int>[] trianglesByMaterial =
+            List<int>[] terrainTriangles =
             {
                 new List<int>(),
                 new List<int>(),
                 new List<int>()
             };
 
+            List<Vector3> waterVertices = new List<Vector3>();
+            List<int> waterTriangles = new List<int>();
+            List<Vector3> waterNormals = new List<Vector3>();
+
             foreach (int cellIndex in cellIndices)
             {
                 if (cellIndex < 0 || cellIndex >= planet.planetCells.Count)
                     continue;
 
-                BuildCell(cellIndex, vertices, trianglesByMaterial, normals);
+                BuildCell(
+                    cellIndex,
+                    terrainVertices,
+                    terrainTriangles,
+                    terrainNormals,
+                    waterVertices,
+                    waterTriangles,
+                    waterNormals
+                );
             }
 
-            mesh.SetVertices(vertices);
-            mesh.SetNormals(normals);
-            mesh.subMeshCount = 3;
+            BuildTerrainMesh(terrainVertices, terrainTriangles, terrainNormals);
+            BuildWaterMesh(waterVertices, waterTriangles, waterNormals);
+        }
 
-            mesh.SetTriangles(trianglesByMaterial[0], 0);
-            mesh.SetTriangles(trianglesByMaterial[1], 1);
-            mesh.SetTriangles(trianglesByMaterial[2], 2);
+        private void BuildTerrainMesh(
+            List<Vector3> vertices,
+            List<int>[] triangles,
+            List<Vector3> normals)
+        {
+            Mesh terrainMesh = new Mesh();
+            terrainMesh.name = $"Planet Chunk {chunkIndex}";
+            terrainMesh.indexFormat = IndexFormat.UInt32;
 
-            mesh.RecalculateBounds();
+            terrainMesh.SetVertices(vertices);
+            terrainMesh.SetNormals(normals);
+            terrainMesh.subMeshCount = 3;
 
-            meshFilter.sharedMesh = mesh;
+            terrainMesh.SetTriangles(triangles[0], 0);
+            terrainMesh.SetTriangles(triangles[1], 1);
+            terrainMesh.SetTriangles(triangles[2], 2);
+
+            terrainMesh.RecalculateBounds();
+
+            meshFilter.sharedMesh = terrainMesh;
 
             meshCollider.sharedMesh = null;
-            meshCollider.sharedMesh = mesh;
+            meshCollider.sharedMesh = terrainMesh;
+        }
+
+        private void BuildWaterMesh(
+            List<Vector3> vertices,
+            List<int> triangles,
+            List<Vector3> normals)
+        {
+            Mesh waterMesh = new Mesh();
+            waterMesh.name = $"Water Chunk {chunkIndex}";
+            waterMesh.indexFormat = IndexFormat.UInt32;
+
+            waterMesh.SetVertices(vertices);
+            waterMesh.SetTriangles(triangles, 0);
+            waterMesh.SetNormals(normals);
+            waterMesh.RecalculateBounds();
+
+            waterMeshFilter.sharedMesh = waterMesh;
         }
 
         private void BuildCell(
             int cellIndex,
-            List<Vector3> vertices,
-            List<int>[] trianglesByMaterial,
-            List<Vector3> normals)
+            List<Vector3> terrainVertices,
+            List<int>[] terrainTriangles,
+            List<Vector3> terrainNormals,
+            List<Vector3> waterVertices,
+            List<int> waterTriangles,
+            List<Vector3> waterNormals)
         {
             GoldbergPlanet.PlanetCell cell = planet.planetCells[cellIndex];
 
@@ -100,25 +182,38 @@ namespace VoxelPlanet
                 if (blockType == GoldbergPlanet.BlockType.Air)
                     continue;
 
-                BuildBlock(
-                    cellIndex,
-                    cell,
-                    layer,
-                    blockType,
-                    vertices,
-                    trianglesByMaterial,
-                    normals
-                );
+                if (blockType == GoldbergPlanet.BlockType.Water)
+                {
+                    BuildWaterBlock(
+                        cell,
+                        layer,
+                        waterVertices,
+                        waterTriangles,
+                        waterNormals
+                    );
+                }
+                else
+                {
+                    BuildSolidBlock(
+                        cellIndex,
+                        cell,
+                        layer,
+                        blockType,
+                        terrainVertices,
+                        terrainTriangles,
+                        terrainNormals
+                    );
+                }
             }
         }
 
-        private void BuildBlock(
+        private void BuildSolidBlock(
             int cellIndex,
             GoldbergPlanet.PlanetCell cell,
             int layer,
             GoldbergPlanet.BlockType blockType,
             List<Vector3> vertices,
-            List<int>[] trianglesByMaterial,
+            List<int>[] triangles,
             List<Vector3> normals)
         {
             int materialIndex = planet.GetMaterialIndex(blockType);
@@ -140,33 +235,31 @@ namespace VoxelPlanet
             Vector3 bottomCenter = cell.center + cell.normal * bottomOffset;
             Vector3 topCenter = cell.center + cell.normal * topOffset;
 
-            if (!planet.HasBlock(cellIndex, layer + 1))
+            if (!planet.HasSolidBlock(cellIndex, layer + 1))
             {
-                AddPolygonFace(
+                AddTerrainPolygonFace(
                     topCenter,
                     topCorners,
                     cell.normal,
-                    cellIndex,
                     materialIndex,
                     vertices,
-                    trianglesByMaterial,
+                    triangles,
                     normals
                 );
             }
 
-            if (!planet.HasBlock(cellIndex, layer - 1))
+            if (!planet.HasSolidBlock(cellIndex, layer - 1))
             {
                 List<Vector3> reversedBottomCorners = new List<Vector3>(bottomCorners);
                 reversedBottomCorners.Reverse();
 
-                AddPolygonFace(
+                AddTerrainPolygonFace(
                     bottomCenter,
                     reversedBottomCorners,
                     -cell.normal,
-                    cellIndex,
                     materialIndex,
                     vertices,
-                    trianglesByMaterial,
+                    triangles,
                     normals
                 );
             }
@@ -175,12 +268,12 @@ namespace VoxelPlanet
             {
                 int neighbourIndex = cell.neighbours[i];
 
-                bool neighbourHasBlock =
+                bool neighbourHasSolidBlock =
                     neighbourIndex >= 0 &&
                     neighbourIndex < planet.planetCells.Count &&
-                    planet.HasBlock(neighbourIndex, layer);
+                    planet.HasSolidBlock(neighbourIndex, layer);
 
-                if (neighbourHasBlock)
+                if (neighbourHasSolidBlock)
                     continue;
 
                 Vector3 bottomA = bottomCorners[i];
@@ -189,28 +282,58 @@ namespace VoxelPlanet
                 Vector3 topA = topCorners[i];
                 Vector3 topB = topCorners[(i + 1) % topCorners.Count];
 
-                AddQuadFace(
+                AddTerrainQuadFace(
                     bottomA,
                     bottomB,
                     topA,
                     topB,
-                    cellIndex,
                     materialIndex,
                     vertices,
-                    trianglesByMaterial,
+                    triangles,
                     normals
                 );
             }
         }
 
-        private void AddPolygonFace(
+        private void BuildWaterBlock(
+            GoldbergPlanet.PlanetCell cell,
+            int layer,
+            List<Vector3> vertices,
+            List<int> triangles,
+            List<Vector3> normals)
+        {
+            if (planet.GetBlock(cell.index, layer + 1) == GoldbergPlanet.BlockType.Water)
+                return;
+
+            float topOffset = (layer + 1) * planet.blockHeight;
+
+            Vector3 topCenter = cell.center + cell.normal * topOffset;
+
+            List<Vector3> topCorners = new List<Vector3>();
+
+            for (int i = 0; i < cell.corners.Count; i++)
+            {
+                Vector3 cornerNormal = cell.corners[i].normalized;
+                topCorners.Add(cell.corners[i] + cornerNormal * topOffset);
+            }
+
+            AddWaterPolygonFace(
+                topCenter,
+                topCorners,
+                cell.normal,
+                vertices,
+                triangles,
+                normals
+            );
+        }
+
+        private void AddTerrainPolygonFace(
             Vector3 center,
             List<Vector3> corners,
             Vector3 normal,
-            int cellIndex,
             int materialIndex,
             List<Vector3> vertices,
-            List<int>[] trianglesByMaterial,
+            List<int>[] triangles,
             List<Vector3> normals)
         {
             int centerIndex = vertices.Count;
@@ -231,23 +354,20 @@ namespace VoxelPlanet
                 int current = startIndex + i;
                 int next = startIndex + ((i + 1) % corners.Count);
 
-                trianglesByMaterial[materialIndex].Add(centerIndex);
-                trianglesByMaterial[materialIndex].Add(current);
-                trianglesByMaterial[materialIndex].Add(next);
-
-                planet.RegisterTriangleCell(chunkIndex, cellIndex);
+                triangles[materialIndex].Add(centerIndex);
+                triangles[materialIndex].Add(current);
+                triangles[materialIndex].Add(next);
             }
         }
 
-        private void AddQuadFace(
+        private void AddTerrainQuadFace(
             Vector3 bottomA,
             Vector3 bottomB,
             Vector3 topA,
             Vector3 topB,
-            int cellIndex,
             int materialIndex,
             List<Vector3> vertices,
-            List<int>[] trianglesByMaterial,
+            List<int>[] triangles,
             List<Vector3> normals)
         {
             int start = vertices.Count;
@@ -264,57 +384,45 @@ namespace VoxelPlanet
             normals.Add(faceNormal);
             normals.Add(faceNormal);
 
-            trianglesByMaterial[materialIndex].Add(start + 0);
-            trianglesByMaterial[materialIndex].Add(start + 1);
-            trianglesByMaterial[materialIndex].Add(start + 2);
-            planet.RegisterTriangleCell(chunkIndex, cellIndex);
+            triangles[materialIndex].Add(start + 0);
+            triangles[materialIndex].Add(start + 1);
+            triangles[materialIndex].Add(start + 2);
 
-            trianglesByMaterial[materialIndex].Add(start + 1);
-            trianglesByMaterial[materialIndex].Add(start + 3);
-            trianglesByMaterial[materialIndex].Add(start + 2);
-            planet.RegisterTriangleCell(chunkIndex, cellIndex);
+            triangles[materialIndex].Add(start + 1);
+            triangles[materialIndex].Add(start + 3);
+            triangles[materialIndex].Add(start + 2);
         }
 
-        public Vector3 GetChunkCenterWorld()
+        private void AddWaterPolygonFace(
+            Vector3 center,
+            List<Vector3> corners,
+            Vector3 normal,
+            List<Vector3> vertices,
+            List<int> triangles,
+            List<Vector3> normals)
         {
-            if (cellIndices.Count == 0 || planet == null)
-                return transform.position;
+            int centerIndex = vertices.Count;
 
-            Vector3 center = Vector3.zero;
-            int validCount = 0;
+            vertices.Add(center);
+            normals.Add(normal.normalized);
 
-            foreach (int cellIndex in cellIndices)
+            int startIndex = vertices.Count;
+
+            for (int i = 0; i < corners.Count; i++)
             {
-                if (cellIndex < 0 || cellIndex >= planet.planetCells.Count)
-                    continue;
-
-                center += planet.planetCells[cellIndex].center;
-                validCount++;
+                vertices.Add(corners[i]);
+                normals.Add(normal.normalized);
             }
 
-            if (validCount == 0)
-                return transform.position;
+            for (int i = 0; i < corners.Count; i++)
+            {
+                int current = startIndex + i;
+                int next = startIndex + ((i + 1) % corners.Count);
 
-            center /= validCount;
-            return planet.transform.TransformPoint(center);
-        }
-
-        public void SetVisible(bool isVisible)
-        {
-            if (meshRenderer != null)
-                meshRenderer.enabled = isVisible;
-
-            if (meshCollider != null)
-                meshCollider.enabled = isVisible;
-        }
-
-        public float GetDistanceSqrToPoint(Vector3 point)
-        {
-            if (meshRenderer == null)
-                return float.MaxValue;
-
-            Vector3 closestPoint = meshRenderer.bounds.ClosestPoint(point);
-            return (closestPoint - point).sqrMagnitude;
+                triangles.Add(centerIndex);
+                triangles.Add(current);
+                triangles.Add(next);
+            }
         }
     }
 }
