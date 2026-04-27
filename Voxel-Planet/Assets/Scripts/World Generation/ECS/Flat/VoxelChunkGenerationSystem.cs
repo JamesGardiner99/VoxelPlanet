@@ -24,7 +24,7 @@ namespace VoxelPlanet
             int expectedBlockCount = size * size * layers;
 
             foreach (var (chunk, blocks) in
-                     SystemAPI.Query<RefRW<VoxelChunk>, DynamicBuffer<VoxelBlock>>())
+                     SystemAPI.Query<RefRW<FlatVoxelChunk>, DynamicBuffer<VoxelBlock>>())
             {
                 if (chunk.ValueRO.NeedsGeneration == 0)
                     continue;

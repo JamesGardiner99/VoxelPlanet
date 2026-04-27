@@ -31,7 +31,7 @@ namespace VoxelPlanet
                 {
                     Entity chunkEntity = ecb.CreateEntity();
 
-                    ecb.AddComponent(chunkEntity, new VoxelChunk
+                    ecb.AddComponent(chunkEntity, new FlatVoxelChunk
                     {
                         Coord = new int2(x, z),
                         NeedsGeneration = 1,
