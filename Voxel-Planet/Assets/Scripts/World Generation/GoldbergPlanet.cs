@@ -91,6 +91,9 @@ namespace VoxelPlanet
         public Material stoneMaterial;
         public Material waterMaterial;
 
+        [Header("Voxel World")]
+        public VoxelWorld voxelWorld;
+
         [Header("GPU Terrain Generation")]
         public ComputeShader terrainCompute;
         public float terrainHeightAmplitude = 4f;
@@ -126,6 +129,11 @@ namespace VoxelPlanet
 
         private void Awake()
         {
+            if(voxelWorld == null)
+            {
+                voxelWorld = GetComponent<VoxelWorld>();
+            }
+
             GeneratePlanet();
         }
 
@@ -514,28 +522,7 @@ namespace VoxelPlanet
 
         private void GenerateInitialBlocks(PlanetCell cell, int surfaceLayer)
         {
-            cell.blocks.Clear();
-
-            if (surfaceLayer < oceanLevel)
-                cell.blocks[surfaceLayer] = BlockType.Dirt;
-            else
-                cell.blocks[surfaceLayer] = BlockType.Grass;
-
-            cell.blocks[surfaceLayer - 1] = BlockType.Dirt;
-            cell.blocks[surfaceLayer - 2] = BlockType.Dirt;
-
-            for (int layer = surfaceLayer - 3; layer >= surfaceLayer - 8; layer--)
-            {
-                cell.blocks[layer] = BlockType.Stone;
-            }
-
-            if (surfaceLayer < oceanLevel)
-            {
-                for (int layer = surfaceLayer + 1; layer <= oceanLevel; layer++)
-                {
-                    cell.blocks[layer] = BlockType.Water;
-                }
-            }
+            voxelWorld.GenerateBasicColumn(cell.index, surfaceLayer, oceanLevel);
         }
 
         private int GetChunkIndexForCell(Vector3 normal)
@@ -780,14 +767,7 @@ namespace VoxelPlanet
             if (cellIndex < 0 || cellIndex >= planetCells.Count)
                 return;
 
-            int highestLayer = GetHighestSolidLayer(cellIndex);
-
-            if (highestLayer == int.MinValue)
-                highestLayer = -1;
-
-            int newLayer = highestLayer + 1;
-
-            planetCells[cellIndex].blocks[newLayer] = BlockType.Grass;
+            voxelWorld.AddBlockAboveTop(cellIndex, VoxelWorld.BlockType.Grass);
 
             RebuildCellAndNeighbourChunks(cellIndex);
         }
@@ -797,16 +777,10 @@ namespace VoxelPlanet
             if (cellIndex < 0 || cellIndex >= planetCells.Count)
                 return;
 
-            int highestLayer = GetHighestSolidLayer(cellIndex);
-
-            if (highestLayer == int.MinValue)
-                return;
-
-            planetCells[cellIndex].blocks.Remove(highestLayer);
+            voxelWorld.RemoveTopSolidBlock(cellIndex);
 
             RebuildCellAndNeighbourChunks(cellIndex);
         }
-
         public int GetMaterialIndex(BlockType blockType)
         {
             switch (blockType)

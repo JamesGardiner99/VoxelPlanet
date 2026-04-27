@@ -123,6 +123,37 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1 &150204428
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 150204429}
+  m_Layer: 0
+  m_Name: RayDebug
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &150204429
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 150204428}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 652049211}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &212596958
 GameObject:
   m_ObjectHideFlags: 0
@@ -306,11 +337,12 @@ Transform:
   m_GameObject: {fileID: 652049210}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 151, z: 0}
+  m_LocalPosition: {x: 0, y: 5001, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 748251231}
+  - {fileID: 150204429}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &652049212
@@ -329,7 +361,7 @@ MonoBehaviour:
   jumpForce: 8
   gravityStrength: 20
   acceleration: 25
-  isFlying: 0
+  isFlying: 1
   flySpeed: 30
   flyAcceleration: 30
   doubleTapTime: 0.3
@@ -456,6 +488,9 @@ MonoBehaviour:
   playerCamera: {fileID: 748251233}
   planet: {fileID: 1384740437}
   cellHighlighter: {fileID: 212596959}
+  rayRenderer: {fileID: 0}
+  showRay: 1
+  rayWidth: 0.02
   editRange: 20
   planetMask:
     serializedVersion: 2
@@ -562,6 +597,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1384740438}
   - component: {fileID: 1384740437}
+  - component: {fileID: 1384740439}
   m_Layer: 6
   m_Name: Planet
   m_TagString: Untagged
@@ -581,8 +617,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 12275c7d518aa2543b40d7391deb33e8, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  radius: 150
-  subdivisions: 6
+  radius: 1000
+  subdivisions: 7
   viewer: {fileID: 652049211}
   renderCheckInterval: 0.25
   initialChunkPoolSize: 64
@@ -590,20 +626,21 @@ MonoBehaviour:
   unloadDistance: 220
   maxChunkLoadsPerTick: 4
   chunksPerRootFaceSide: 6
-  blockHeight: 0.5
+  blockHeight: 1
   grassMaterial: {fileID: 2100000, guid: c1fd058ba211db54e9b74237aa55dbb2, type: 2}
   dirtMaterial: {fileID: 2100000, guid: 1ff209d7759b7a44da04f6876c121c8d, type: 2}
   stoneMaterial: {fileID: 2100000, guid: fae7f2fa43d0e844281d1f94ed00adb9, type: 2}
-  waterMaterial: {fileID: 0}
+  waterMaterial: {fileID: 2100000, guid: b3346d860c14ee0469bce1a7ac60e3da, type: 2}
+  voxelWorld: {fileID: 1384740439}
   terrainCompute: {fileID: 7200000, guid: f62be210d95abd147a6beaf631d34edb, type: 3}
   terrainHeightAmplitude: 4
   terrainNoiseScale: 3
   terrainSeed: 12345
   continentScale: 1.2
-  continentStrength: 8
+  continentStrength: 16
   detailScale: 8
-  detailStrength: 2
-  oceanLevel: -7
+  detailStrength: 8
+  oceanLevel: -12
 --- !u!4 &1384740438
 Transform:
   m_ObjectHideFlags: 0
@@ -619,6 +656,18 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1384740439
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1384740436}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b4734157c22fc5e4fa7042808d300376, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

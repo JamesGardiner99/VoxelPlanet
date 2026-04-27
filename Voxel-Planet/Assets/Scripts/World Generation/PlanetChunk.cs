@@ -19,6 +19,8 @@ namespace VoxelPlanet
         private MeshFilter waterMeshFilter;
         private MeshRenderer waterMeshRenderer;
 
+        private readonly List<int> triangleToCell = new List<int>();
+
         private void Awake()
         {
             meshFilter = GetComponent<MeshFilter>();
@@ -69,6 +71,7 @@ namespace VoxelPlanet
         public void ClearChunk()
         {
             cellIndices.Clear();
+            triangleToCell.Clear();
 
             if (meshFilter != null)
                 meshFilter.sharedMesh = null;
@@ -82,10 +85,20 @@ namespace VoxelPlanet
             gameObject.SetActive(false);
         }
 
+        public int GetCellIndexFromTriangle(int triangleIndex)
+        {
+            if (triangleIndex < 0 || triangleIndex >= triangleToCell.Count)
+                return -1;
+
+            return triangleToCell[triangleIndex];
+        }
+
         public void RebuildMesh()
         {
-            if (planet == null)
+            if (planet == null || planet.voxelWorld == null)
                 return;
+
+            triangleToCell.Clear();
 
             List<Vector3> terrainVertices = new List<Vector3>();
             List<Vector3> terrainNormals = new List<Vector3>();
@@ -174,15 +187,21 @@ namespace VoxelPlanet
         {
             GoldbergPlanet.PlanetCell cell = planet.planetCells[cellIndex];
 
-            foreach (var blockPair in cell.blocks)
+            IReadOnlyDictionary<int, VoxelWorld.BlockType> blocks =
+                planet.voxelWorld.GetBlocksForCell(cellIndex);
+
+            if (blocks == null)
+                return;
+
+            foreach (var blockPair in blocks)
             {
                 int layer = blockPair.Key;
-                GoldbergPlanet.BlockType blockType = blockPair.Value;
+                VoxelWorld.BlockType blockType = blockPair.Value;
 
-                if (blockType == GoldbergPlanet.BlockType.Air)
+                if (blockType == VoxelWorld.BlockType.Air)
                     continue;
 
-                if (blockType == GoldbergPlanet.BlockType.Water)
+                if (blockType == VoxelWorld.BlockType.Water)
                 {
                     BuildWaterBlock(
                         cell,
@@ -211,12 +230,12 @@ namespace VoxelPlanet
             int cellIndex,
             GoldbergPlanet.PlanetCell cell,
             int layer,
-            GoldbergPlanet.BlockType blockType,
+            VoxelWorld.BlockType blockType,
             List<Vector3> vertices,
             List<int>[] triangles,
             List<Vector3> normals)
         {
-            int materialIndex = planet.GetMaterialIndex(blockType);
+            int materialIndex = GetMaterialIndex(blockType);
 
             float bottomOffset = layer * planet.blockHeight;
             float topOffset = (layer + 1) * planet.blockHeight;
@@ -235,12 +254,13 @@ namespace VoxelPlanet
             Vector3 bottomCenter = cell.center + cell.normal * bottomOffset;
             Vector3 topCenter = cell.center + cell.normal * topOffset;
 
-            if (!planet.HasSolidBlock(cellIndex, layer + 1))
+            if (!planet.voxelWorld.HasSolidBlock(cellIndex, layer + 1))
             {
                 AddTerrainPolygonFace(
                     topCenter,
                     topCorners,
                     cell.normal,
+                    cellIndex,
                     materialIndex,
                     vertices,
                     triangles,
@@ -248,7 +268,7 @@ namespace VoxelPlanet
                 );
             }
 
-            if (!planet.HasSolidBlock(cellIndex, layer - 1))
+            if (!planet.voxelWorld.HasSolidBlock(cellIndex, layer - 1))
             {
                 List<Vector3> reversedBottomCorners = new List<Vector3>(bottomCorners);
                 reversedBottomCorners.Reverse();
@@ -257,6 +277,7 @@ namespace VoxelPlanet
                     bottomCenter,
                     reversedBottomCorners,
                     -cell.normal,
+                    cellIndex,
                     materialIndex,
                     vertices,
                     triangles,
@@ -271,7 +292,7 @@ namespace VoxelPlanet
                 bool neighbourHasSolidBlock =
                     neighbourIndex >= 0 &&
                     neighbourIndex < planet.planetCells.Count &&
-                    planet.HasSolidBlock(neighbourIndex, layer);
+                    planet.voxelWorld.HasSolidBlock(neighbourIndex, layer);
 
                 if (neighbourHasSolidBlock)
                     continue;
@@ -287,6 +308,7 @@ namespace VoxelPlanet
                     bottomB,
                     topA,
                     topB,
+                    cellIndex,
                     materialIndex,
                     vertices,
                     triangles,
@@ -302,7 +324,7 @@ namespace VoxelPlanet
             List<int> triangles,
             List<Vector3> normals)
         {
-            if (planet.GetBlock(cell.index, layer + 1) == GoldbergPlanet.BlockType.Water)
+            if (planet.voxelWorld.GetBlock(cell.index, layer + 1) == VoxelWorld.BlockType.Water)
                 return;
 
             float topOffset = (layer + 1) * planet.blockHeight;
@@ -327,10 +349,29 @@ namespace VoxelPlanet
             );
         }
 
+        private int GetMaterialIndex(VoxelWorld.BlockType blockType)
+        {
+            switch (blockType)
+            {
+                case VoxelWorld.BlockType.Grass:
+                    return 0;
+
+                case VoxelWorld.BlockType.Dirt:
+                    return 1;
+
+                case VoxelWorld.BlockType.Stone:
+                    return 2;
+
+                default:
+                    return 0;
+            }
+        }
+
         private void AddTerrainPolygonFace(
             Vector3 center,
             List<Vector3> corners,
             Vector3 normal,
+            int cellIndex,
             int materialIndex,
             List<Vector3> vertices,
             List<int>[] triangles,
@@ -357,6 +398,8 @@ namespace VoxelPlanet
                 triangles[materialIndex].Add(centerIndex);
                 triangles[materialIndex].Add(current);
                 triangles[materialIndex].Add(next);
+
+                triangleToCell.Add(cellIndex);
             }
         }
 
@@ -365,6 +408,7 @@ namespace VoxelPlanet
             Vector3 bottomB,
             Vector3 topA,
             Vector3 topB,
+            int cellIndex,
             int materialIndex,
             List<Vector3> vertices,
             List<int>[] triangles,
@@ -387,10 +431,12 @@ namespace VoxelPlanet
             triangles[materialIndex].Add(start + 0);
             triangles[materialIndex].Add(start + 1);
             triangles[materialIndex].Add(start + 2);
+            triangleToCell.Add(cellIndex);
 
             triangles[materialIndex].Add(start + 1);
             triangles[materialIndex].Add(start + 3);
             triangles[materialIndex].Add(start + 2);
+            triangleToCell.Add(cellIndex);
         }
 
         private void AddWaterPolygonFace(

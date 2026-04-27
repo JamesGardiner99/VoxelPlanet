@@ -28,7 +28,8 @@ namespace VoxelPlanet
 
         public void HighlightCell(int cellIndex)
         {
-            if (planet == null || cellIndex < 0 || cellIndex >= planet.planetCells.Count)
+            if (planet == null || planet.voxelWorld == null ||
+                cellIndex < 0 || cellIndex >= planet.planetCells.Count)
             {
                 lineRenderer.positionCount = 0;
                 return;
@@ -36,13 +37,7 @@ namespace VoxelPlanet
 
             var cell = planet.planetCells[cellIndex];
 
-            if (cell.corners == null || cell.corners.Count == 0)
-            {
-                lineRenderer.positionCount = 0;
-                return;
-            }
-
-            int highestLayer = planet.GetHighestSolidLayer(cellIndex);
+            int highestLayer = planet.voxelWorld.GetHighestSolidLayer(cellIndex);
 
             if (highestLayer == int.MinValue)
             {
