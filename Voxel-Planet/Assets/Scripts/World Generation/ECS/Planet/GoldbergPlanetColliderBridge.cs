@@ -1,37 +1,60 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace VoxelPlanet
 {
-    public class GoldbergPlanetColliderBridge : MonoBehaviour
+    public class GoldbergChunkColliderBridge : MonoBehaviour
     {
-        private static GameObject colliderObject;
-        private static MeshCollider meshCollider;
+        public static GoldbergChunkColliderBridge Instance;
 
-        public static void SetColliderMesh(Mesh mesh)
+        private readonly Dictionary<int, MeshCollider> chunkColliders = new();
+
+        private void Awake()
         {
-            if (colliderObject == null)
-            {
-                colliderObject = new GameObject("Goldberg Planet Collider");
+            Instance = this;
+            Debug.Log("GoldbergChunkColliderBridge active");
+        }
 
-                meshCollider = colliderObject.AddComponent<MeshCollider>();
+        public static void SetChunkCollider(int chunkIndex, Mesh mesh)
+        {
+            if (Instance == null)
+            {
+                Debug.LogWarning("GoldbergChunkColliderBridge Instance is null.");
+                return;
+            }
+
+            Instance.SetChunkColliderInternal(chunkIndex, mesh);
+        }
+
+        private void SetChunkColliderInternal(int chunkIndex, Mesh mesh)
+        {
+            if (mesh == null || mesh.vertexCount == 0)
+            {
+                Debug.LogWarning($"Chunk {chunkIndex} collider mesh is null or empty.");
+                return;
+            }
+
+            if (!chunkColliders.TryGetValue(chunkIndex, out MeshCollider meshCollider))
+            {
+                GameObject chunkObject = new GameObject($"Goldberg Chunk Collider {chunkIndex}");
+                chunkObject.transform.SetParent(transform, false);
+
+                chunkObject.transform.localPosition = Vector3.zero;
+                chunkObject.transform.localRotation = Quaternion.identity;
+                chunkObject.transform.localScale = Vector3.one;
+
+                chunkObject.layer = LayerMask.NameToLayer("Default");
+
+                meshCollider = chunkObject.AddComponent<MeshCollider>();
                 meshCollider.convex = false;
 
-                colliderObject.layer = LayerMask.NameToLayer("Default");
+                chunkColliders.Add(chunkIndex, meshCollider);
             }
 
             meshCollider.sharedMesh = null;
-            mesh.RecalculateBounds();
             meshCollider.sharedMesh = mesh;
-        }
 
-        public static void Clear()
-        {
-            if (colliderObject != null)
-            {
-                Destroy(colliderObject);
-                colliderObject = null;
-                meshCollider = null;
-            }
+            Debug.Log($"Collider set for chunk {chunkIndex}. Vertices: {mesh.vertexCount}");
         }
     }
 }

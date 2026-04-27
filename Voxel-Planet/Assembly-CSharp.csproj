@@ -86,10 +86,12 @@
     <Compile Include="Assets\Scripts\Player\PlanetPlayerController.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelPlanetBootstrapSystem.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelPlanetBaker.cs" />
+    <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergVoxelChunkCreationSystem.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergPlanetColliderBridge.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Flat\VoxelChunkGenerationSystem.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Flat\VoxelChunkMeshRenderSystem.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergPlanetAuthoring.cs" />
+    <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergVoxelChunk.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelChunkStreamingSystem.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergVoxelMeshSystem.cs" />
   </ItemGroup>
@@ -973,12 +975,12 @@
       <HintPath>Library\ScriptAssemblies\Unity.Entities.Build.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <Reference Include="Unity.Entities.Hybrid">
-      <HintPath>Library\ScriptAssemblies\Unity.Entities.Hybrid.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
     <Reference Include="Unity.RenderPipelines.Universal.Config.Runtime">
       <HintPath>Library\ScriptAssemblies\Unity.RenderPipelines.Universal.Config.Runtime.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Unity.Entities.Hybrid">
+      <HintPath>Library\ScriptAssemblies\Unity.Entities.Hybrid.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Unity.RenderPipelines.Core.Editor">

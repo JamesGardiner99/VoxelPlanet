@@ -8,13 +8,15 @@ using UnityEngine.Rendering;
 
 namespace VoxelPlanet
 {
+    [UpdateAfter(typeof(GoldbergColumnGenerationSystem))]
+    [UpdateAfter(typeof(GoldbergVoxelChunkCreationSystem))]
     public partial class GoldbergVoxelMeshSystem : SystemBase
     {
         private Material grassMaterial;
 
         protected override void OnCreate()
         {
-            RequireForUpdate<GoldbergPlanetSettings>();
+            RequireForUpdate<GoldbergVoxelChunk>();
 
             Shader shader = Shader.Find("Universal Render Pipeline/Lit");
 
@@ -27,43 +29,48 @@ namespace VoxelPlanet
         {
             EntityManager entityManager = EntityManager;
 
-            EntityQuery query = GetEntityQuery(
-                typeof(GoldbergPlanetSettings),
-                typeof(GoldbergCell),
-                typeof(GoldbergCellVertex),
-                typeof(VoxelColumn)
-            );
+            EntityQuery query = GetEntityQuery(typeof(GoldbergVoxelChunk));
 
-            using Unity.Collections.NativeArray<Entity> entities =
+            using Unity.Collections.NativeArray<Entity> chunkEntities =
                 query.ToEntityArray(Unity.Collections.Allocator.Temp);
 
-            for (int i = 0; i < entities.Length; i++)
+            for (int i = 0; i < chunkEntities.Length; i++)
             {
-                Entity entity = entities[i];
+                Entity chunkEntity = chunkEntities[i];
 
-                GoldbergPlanetSettings settings =
-                    entityManager.GetComponentData<GoldbergPlanetSettings>(entity);
+                GoldbergVoxelChunk chunk =
+                    entityManager.GetComponentData<GoldbergVoxelChunk>(chunkEntity);
 
-                if (settings.NeedsVoxelMeshBuild == 0)
+                if (chunk.NeedsMeshBuild == 0)
                     continue;
 
+                if (!entityManager.Exists(chunk.PlanetEntity))
+                    continue;
+
+                RemoveOldPlanetRenderComponents(entityManager, chunk.PlanetEntity);
+
+                GoldbergPlanetSettings settings =
+                    entityManager.GetComponentData<GoldbergPlanetSettings>(chunk.PlanetEntity);
+
                 DynamicBuffer<GoldbergCell> cells =
-                    entityManager.GetBuffer<GoldbergCell>(entity);
+                    entityManager.GetBuffer<GoldbergCell>(chunk.PlanetEntity);
 
                 DynamicBuffer<GoldbergCellVertex> cellVertices =
-                    entityManager.GetBuffer<GoldbergCellVertex>(entity);
+                    entityManager.GetBuffer<GoldbergCellVertex>(chunk.PlanetEntity);
 
                 DynamicBuffer<VoxelColumn> columns =
-                    entityManager.GetBuffer<VoxelColumn>(entity);
+                    entityManager.GetBuffer<VoxelColumn>(chunk.PlanetEntity);
 
-                Mesh mesh = BuildVoxelPlanetMesh(
+                Mesh mesh = BuildVoxelChunkMesh(
                     settings,
                     cells,
                     cellVertices,
-                    columns
+                    columns,
+                    chunk.StartColumnIndex,
+                    chunk.ColumnCount
                 );
 
-                GoldbergPlanetColliderBridge.SetColliderMesh(mesh);
+                GoldbergChunkColliderBridge.SetChunkCollider(chunk.ChunkIndex, mesh);
 
                 int vertexCount = mesh.vertexCount;
 
@@ -77,36 +84,63 @@ namespace VoxelPlanet
                     receiveShadows: true
                 );
 
-                if (!entityManager.HasComponent<LocalTransform>(entity))
+                if (!entityManager.HasComponent<LocalTransform>(chunkEntity))
                 {
-                    entityManager.AddComponentData(entity, LocalTransform.Identity);
+                    entityManager.AddComponentData(chunkEntity, LocalTransform.Identity);
                 }
 
-                RenderMeshUtility.AddComponents(
-                    entity,
-                    entityManager,
-                    desc,
-                    renderMeshArray,
-                    MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
+                if (!entityManager.HasComponent<MaterialMeshInfo>(chunkEntity))
+                {
+                    RenderMeshUtility.AddComponents(
+                        chunkEntity,
+                        entityManager,
+                        desc,
+                        renderMeshArray,
+                        MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
+                    );
+                }
+                else
+                {
+                    entityManager.SetSharedComponentManaged(chunkEntity, renderMeshArray);
+
+                    entityManager.SetComponentData(
+                        chunkEntity,
+                        MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
+                    );
+                }
+
+                chunk.NeedsMeshBuild = 0;
+                entityManager.SetComponentData(chunkEntity, chunk);
+
+                Debug.Log(
+                    $"Goldberg chunk {chunk.ChunkIndex} mesh built. Vertices: {vertexCount}"
                 );
 
-                entityManager.SetComponentData(
-                    entity,
-                    MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
-                );
-
-                settings.NeedsVoxelMeshBuild = 0;
-                entityManager.SetComponentData(entity, settings);
-
-                Debug.Log($"Goldberg voxel mesh built. Vertices: {vertexCount}");
+                // Build only one chunk per frame.
+                // This avoids DOTS buffer handles being invalidated by structural changes.
+                return;
             }
         }
 
-        private Mesh BuildVoxelPlanetMesh(
+        private void RemoveOldPlanetRenderComponents(EntityManager entityManager, Entity planetEntity)
+        {
+            if (entityManager.HasComponent<MaterialMeshInfo>(planetEntity))
+                entityManager.RemoveComponent<MaterialMeshInfo>(planetEntity);
+
+            if (entityManager.HasComponent<RenderBounds>(planetEntity))
+                entityManager.RemoveComponent<RenderBounds>(planetEntity);
+
+            if (entityManager.HasComponent<WorldRenderBounds>(planetEntity))
+                entityManager.RemoveComponent<WorldRenderBounds>(planetEntity);
+        }
+
+        private Mesh BuildVoxelChunkMesh(
             GoldbergPlanetSettings settings,
             DynamicBuffer<GoldbergCell> cells,
             DynamicBuffer<GoldbergCellVertex> cellVertices,
-            DynamicBuffer<VoxelColumn> columns)
+            DynamicBuffer<VoxelColumn> columns,
+            int startColumnIndex,
+            int columnCount)
         {
             List<Vector3> vertices = new List<Vector3>();
             List<int> triangles = new List<int>();
@@ -122,7 +156,10 @@ namespace VoxelPlanet
             Dictionary<EdgeKey, List<int>> edgeToCells =
                 BuildEdgeLookup(cells, cellVertices);
 
-            for (int c = 0; c < columns.Length; c++)
+            int endColumnIndex =
+                Mathf.Min(startColumnIndex + columnCount, columns.Length);
+
+            for (int c = startColumnIndex; c < endColumnIndex; c++)
             {
                 VoxelColumn column = columns[c];
                 GoldbergCell cell = cells[column.CellIndex];
@@ -165,7 +202,7 @@ namespace VoxelPlanet
             }
 
             Mesh mesh = new Mesh();
-            mesh.name = "Goldberg Voxel Planet Mesh";
+            mesh.name = "Goldberg Voxel Chunk Mesh";
 
             if (vertices.Count > 65535)
                 mesh.indexFormat = IndexFormat.UInt32;
@@ -178,52 +215,20 @@ namespace VoxelPlanet
             return mesh;
         }
 
-        private void AddSimpleColumnWalls(
-            GoldbergPlanetSettings settings,
+        private List<Vector3> GetCellPolygonAtRadius(
             GoldbergCell cell,
             DynamicBuffer<GoldbergCellVertex> cellVertices,
-            int surfaceLayer,
-            List<Vector3> vertices,
-            List<int> triangles,
-            List<Vector3> normals)
+            float radius)
         {
-            float topRadius =
-                settings.Radius +
-                ((surfaceLayer - settings.Layers / 2) * settings.CellHeight);
-
-            int bottomLayer = 0;
-
-            float bottomRadius =
-                settings.Radius +
-                ((bottomLayer - settings.Layers / 2) * settings.CellHeight);
+            List<Vector3> polygon = new List<Vector3>();
 
             for (int i = 0; i < cell.VertexCount; i++)
             {
-                int next = (i + 1) % cell.VertexCount;
-
-                Vector3 aBase = (Vector3)math.normalize(
-                    cellVertices[cell.FirstVertexIndex + i].Position
-                );
-
-                Vector3 bBase = (Vector3)math.normalize(
-                    cellVertices[cell.FirstVertexIndex + next].Position
-                );
-
-                Vector3 aTop = aBase * topRadius;
-                Vector3 bTop = bBase * topRadius;
-                Vector3 aBottom = aBase * bottomRadius;
-                Vector3 bBottom = bBase * bottomRadius;
-
-                AddQuadFace(
-                    aBottom,
-                    bBottom,
-                    bTop,
-                    aTop,
-                    vertices,
-                    triangles,
-                    normals
-                );
+                Vector3 p = cellVertices[cell.FirstVertexIndex + i].Position;
+                polygon.Add(p.normalized * radius);
             }
+
+            return polygon;
         }
 
         private void AddPolygonFace(
@@ -237,7 +242,6 @@ namespace VoxelPlanet
                 return;
 
             int centerIndex = vertices.Count;
-
             Vector3 center = Vector3.zero;
 
             for (int i = 0; i < polygon.Count; i++)
@@ -263,7 +267,8 @@ namespace VoxelPlanet
                 Vector3 a = vertices[first + i];
                 Vector3 b = vertices[first + next];
 
-                Vector3 triNormal = Vector3.Cross(a - center, b - center).normalized;
+                Vector3 triNormal =
+                    Vector3.Cross(a - center, b - center).normalized;
 
                 if (Vector3.Dot(triNormal, expectedNormal) >= 0f)
                 {
@@ -280,20 +285,124 @@ namespace VoxelPlanet
             }
         }
 
-        private List<Vector3> GetCellPolygonAtRadius(
+        private void AddNeighbourAwareSideWalls(
+            GoldbergPlanetSettings settings,
+            int currentCellIndex,
             GoldbergCell cell,
             DynamicBuffer<GoldbergCellVertex> cellVertices,
-            float radius)
+            int surfaceLayer,
+            Dictionary<int, int> surfaceLayersByCell,
+            Dictionary<EdgeKey, List<int>> edgeToCells,
+            List<Vector3> vertices,
+            List<int> triangles,
+            List<Vector3> normals)
         {
-            List<Vector3> polygon = new List<Vector3>();
+            float currentRadius =
+                settings.Radius +
+                ((surfaceLayer - settings.Layers / 2) * settings.CellHeight);
 
             for (int i = 0; i < cell.VertexCount; i++)
             {
-                Vector3 p = cellVertices[cell.FirstVertexIndex + i].Position;
-                polygon.Add(p.normalized * radius);
+                int next = (i + 1) % cell.VertexCount;
+
+                Vector3 aBase =
+                    cellVertices[cell.FirstVertexIndex + i].Position;
+
+                Vector3 bBase =
+                    cellVertices[cell.FirstVertexIndex + next].Position;
+
+                EdgeKey edge = new EdgeKey(aBase, bBase);
+
+                int neighbourCellIndex =
+                    FindNeighbourForEdge(edge, currentCellIndex, edgeToCells);
+
+                if (neighbourCellIndex < 0)
+                    continue;
+
+                if (!surfaceLayersByCell.TryGetValue(
+                        neighbourCellIndex,
+                        out int neighbourSurfaceLayer))
+                    continue;
+
+                if (neighbourSurfaceLayer >= surfaceLayer)
+                    continue;
+
+                float neighbourRadius =
+                    settings.Radius +
+                    ((neighbourSurfaceLayer - settings.Layers / 2) * settings.CellHeight);
+
+                Vector3 aDir = aBase.normalized;
+                Vector3 bDir = bBase.normalized;
+
+                Vector3 aTop = aDir * currentRadius;
+                Vector3 bTop = bDir * currentRadius;
+
+                Vector3 aBottom = aDir * neighbourRadius;
+                Vector3 bBottom = bDir * neighbourRadius;
+
+                AddQuadFace(
+                    aBottom,
+                    bBottom,
+                    bTop,
+                    aTop,
+                    vertices,
+                    triangles,
+                    normals
+                );
+            }
+        }
+
+        private Dictionary<EdgeKey, List<int>> BuildEdgeLookup(
+            DynamicBuffer<GoldbergCell> cells,
+            DynamicBuffer<GoldbergCellVertex> cellVertices)
+        {
+            Dictionary<EdgeKey, List<int>> edgeToCells =
+                new Dictionary<EdgeKey, List<int>>();
+
+            for (int cellIndex = 0; cellIndex < cells.Length; cellIndex++)
+            {
+                GoldbergCell cell = cells[cellIndex];
+
+                for (int i = 0; i < cell.VertexCount; i++)
+                {
+                    int next = (i + 1) % cell.VertexCount;
+
+                    Vector3 a =
+                        cellVertices[cell.FirstVertexIndex + i].Position;
+
+                    Vector3 b =
+                        cellVertices[cell.FirstVertexIndex + next].Position;
+
+                    EdgeKey key = new EdgeKey(a, b);
+
+                    if (!edgeToCells.TryGetValue(key, out List<int> list))
+                    {
+                        list = new List<int>();
+                        edgeToCells[key] = list;
+                    }
+
+                    list.Add(cellIndex);
+                }
             }
 
-            return polygon;
+            return edgeToCells;
+        }
+
+        private int FindNeighbourForEdge(
+            EdgeKey edge,
+            int currentCellIndex,
+            Dictionary<EdgeKey, List<int>> edgeToCells)
+        {
+            if (!edgeToCells.TryGetValue(edge, out List<int> cells))
+                return -1;
+
+            for (int i = 0; i < cells.Count; i++)
+            {
+                if (cells[i] != currentCellIndex)
+                    return cells[i];
+            }
+
+            return -1;
         }
 
         private void AddQuadFace(
@@ -335,120 +444,6 @@ namespace VoxelPlanet
             triangles.Add(start + 3);
             triangles.Add(start + 2);
             triangles.Add(start + 0);
-        }
-
-        private Dictionary<EdgeKey, List<int>> BuildEdgeLookup(
-            DynamicBuffer<GoldbergCell> cells,
-            DynamicBuffer<GoldbergCellVertex> cellVertices)
-        {
-            Dictionary<EdgeKey, List<int>> edgeToCells = new Dictionary<EdgeKey, List<int>>();
-
-            for (int cellIndex = 0; cellIndex < cells.Length; cellIndex++)
-            {
-                GoldbergCell cell = cells[cellIndex];
-
-                for (int i = 0; i < cell.VertexCount; i++)
-                {
-                    int next = (i + 1) % cell.VertexCount;
-
-                    Vector3 a = cellVertices[cell.FirstVertexIndex + i].Position;
-                    Vector3 b = cellVertices[cell.FirstVertexIndex + next].Position;
-
-                    EdgeKey key = new EdgeKey(a, b);
-
-                    if (!edgeToCells.TryGetValue(key, out List<int> list))
-                    {
-                        list = new List<int>();
-                        edgeToCells[key] = list;
-                    }
-
-                    list.Add(cellIndex);
-                }
-            }
-
-            return edgeToCells;
-        }
-
-        private void AddNeighbourAwareSideWalls(
-            GoldbergPlanetSettings settings,
-            int currentCellIndex,
-            GoldbergCell cell,
-            DynamicBuffer<GoldbergCellVertex> cellVertices,
-            int surfaceLayer,
-            Dictionary<int, int> surfaceLayersByCell,
-            Dictionary<EdgeKey, List<int>> edgeToCells,
-            List<Vector3> vertices,
-            List<int> triangles,
-            List<Vector3> normals)
-        {
-            float currentRadius =
-                settings.Radius +
-                ((surfaceLayer - settings.Layers / 2) * settings.CellHeight);
-
-            for (int i = 0; i < cell.VertexCount; i++)
-            {
-                int next = (i + 1) % cell.VertexCount;
-
-                Vector3 aBase = cellVertices[cell.FirstVertexIndex + i].Position;
-                Vector3 bBase = cellVertices[cell.FirstVertexIndex + next].Position;
-
-                EdgeKey edge = new EdgeKey(aBase, bBase);
-
-                int neighbourCellIndex = FindNeighbourForEdge(
-                    edge,
-                    currentCellIndex,
-                    edgeToCells
-                );
-
-                if (neighbourCellIndex < 0)
-                    continue;
-
-                if (!surfaceLayersByCell.TryGetValue(neighbourCellIndex, out int neighbourSurfaceLayer))
-                    continue;
-
-                if (neighbourSurfaceLayer >= surfaceLayer)
-                    continue;
-
-                float neighbourRadius =
-                    settings.Radius +
-                    ((neighbourSurfaceLayer - settings.Layers / 2) * settings.CellHeight);
-
-                Vector3 aDir = aBase.normalized;
-                Vector3 bDir = bBase.normalized;
-
-                Vector3 aTop = aDir * currentRadius;
-                Vector3 bTop = bDir * currentRadius;
-
-                Vector3 aBottom = aDir * neighbourRadius;
-                Vector3 bBottom = bDir * neighbourRadius;
-
-                AddQuadFace(
-                    aBottom,
-                    bBottom,
-                    bTop,
-                    aTop,
-                    vertices,
-                    triangles,
-                    normals
-                );
-            }
-        }
-
-        private int FindNeighbourForEdge(
-            EdgeKey edge,
-            int currentCellIndex,
-            Dictionary<EdgeKey, List<int>> edgeToCells)
-        {
-            if (!edgeToCells.TryGetValue(edge, out List<int> cells))
-                return -1;
-
-            for (int i = 0; i < cells.Count; i++)
-            {
-                if (cells[i] != currentCellIndex)
-                    return cells[i];
-            }
-
-            return -1;
         }
 
         private readonly struct EdgeKey
