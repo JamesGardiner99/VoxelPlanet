@@ -77,6 +77,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelChunkComponents.cs" />
+    <Compile Include="Assets\Scripts\World Generation\ECS\ECS Data\VoxelWorld.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelChunkGenerationSystem.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelPlanetComponents.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelPlanetAuthoring.cs" />
@@ -84,12 +85,7 @@
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelPlanetBootstrapSystem.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelChunkRequestSystem.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelPlanetBaker.cs" />
-    <Compile Include="Assets\Scripts\World Generation\PlanetChunk.cs" />
-    <Compile Include="Assets\Scripts\World Generation\CellHighlighter.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelChunkMeshSystem.cs" />
-    <Compile Include="Assets\Scripts\World Generation\VoxelWorld.cs" />
-    <Compile Include="Assets\Scripts\World Generation\GoldbergPlanet.cs" />
-    <Compile Include="Assets\Scripts\World Generation\GoldbergVoxelEditor.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\VoxelChunkStreamingSystem.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -1000,10 +996,6 @@
       <HintPath>Library\ScriptAssemblies\Unity.Performance.Profile-Analyzer.Editor.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <Reference Include="Unity.TestTools.CodeCoverage.Editor">
-      <HintPath>Library\ScriptAssemblies\Unity.TestTools.CodeCoverage.Editor.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
     <Reference Include="Unity.RenderPipelines.Core.ShaderLibrary">
       <HintPath>Library\ScriptAssemblies\Unity.RenderPipelines.Core.ShaderLibrary.dll</HintPath>
       <Private>False</Private>
@@ -1014,6 +1006,10 @@
     </Reference>
     <Reference Include="Unity.Collections">
       <HintPath>Library\ScriptAssemblies\Unity.Collections.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Unity.TestTools.CodeCoverage.Editor">
+      <HintPath>Library\ScriptAssemblies\Unity.TestTools.CodeCoverage.Editor.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Unity.PlasticSCM.Editor">

@@ -1,18 +1,15 @@
-using System.Collections;
-using System.Collections.Generic;
+using Unity.Entities;
 using UnityEngine;
 
-public class VoxelPlanetAuthoring : MonoBehaviour
+namespace VoxelPlanet
 {
-    // Start is called before the first frame update
-    void Start()
+    public class VoxelPlanetAuthoring : MonoBehaviour
     {
-        
-    }
-
-    // Update is called once per frame
-    void Update()
-    {
-        
+        public int cellsPerChunk = 16;
+        public int layersPerChunk = 64;
+        public int viewDistance = 4;
+        public int oceanLevel = 0;
+        public float planetRadius = 64f;
+        public uint seed = 12345;
     }
 }
