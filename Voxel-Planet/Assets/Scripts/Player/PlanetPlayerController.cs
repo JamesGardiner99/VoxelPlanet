@@ -13,7 +13,7 @@ namespace VoxelPlanet
         public float acceleration = 25f;
 
         [Header("Flying / Creative Movement")]
-        public bool isFlying = true;
+        public bool isFlying = false;
         public float flySpeed = 12f;
         public float flyAcceleration = 40f;
         public float doubleTapTime = 0.3f;
@@ -47,11 +47,11 @@ namespace VoxelPlanet
             rb = GetComponent<Rigidbody>();
             capsule = GetComponent<CapsuleCollider>();
 
-            groundMask = LayerMask.GetMask("Default");
-
             rb.useGravity = false;
             rb.freezeRotation = true;
             rb.interpolation = RigidbodyInterpolation.Interpolate;
+            rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            rb.maxDepenetrationVelocity = 20f;
 
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;

@@ -6,11 +6,11 @@ namespace VoxelPlanet
     public class GoldbergPlanetAuthoring : MonoBehaviour
     {
         [Header("Goldberg Planet")]
-        public float radius = 32f;
+        public float radius = 128f;
         public float cellHeight = 1f;
 
         [Range(0, 4)]
-        public int subdivisions = 2;
+        public int subdivisions = 4;
 
         public int layers = 32;
         public int oceanLevel = 0;

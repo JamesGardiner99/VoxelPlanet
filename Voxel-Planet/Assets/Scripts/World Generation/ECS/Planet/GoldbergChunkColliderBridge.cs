@@ -43,6 +43,7 @@ namespace VoxelPlanet
                 chunkObject.transform.localRotation = Quaternion.identity;
                 chunkObject.transform.localScale = Vector3.one;
 
+                // Make sure this matches your player's groundMask
                 chunkObject.layer = LayerMask.NameToLayer("Default");
 
                 meshCollider = chunkObject.AddComponent<MeshCollider>();

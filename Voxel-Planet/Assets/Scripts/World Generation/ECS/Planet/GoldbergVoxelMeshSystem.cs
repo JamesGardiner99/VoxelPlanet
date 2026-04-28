@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Rendering;
 using Unity.Transforms;
@@ -8,11 +10,16 @@ using UnityEngine.Rendering;
 
 namespace VoxelPlanet
 {
-    [UpdateAfter(typeof(GoldbergColumnGenerationSystem))]
-    [UpdateAfter(typeof(GoldbergVoxelChunkCreationSystem))]
+    [UpdateAfter(typeof(GoldbergVoxelGenerationSystem))]
     public partial class GoldbergVoxelMeshSystem : SystemBase
     {
         private Material grassMaterial;
+
+        private readonly Dictionary<Entity, NativeParallelMultiHashMap<EdgeKey, int>>
+            edgeLookupCache = new();
+
+        private readonly Dictionary<Entity, NativeParallelMultiHashMap<VertexKey, int>>
+            vertexLookupCache = new();
 
         protected override void OnCreate()
         {
@@ -25,14 +32,33 @@ namespace VoxelPlanet
             grassMaterial.color = Color.green;
         }
 
+        protected override void OnDestroy()
+        {
+            foreach (NativeParallelMultiHashMap<EdgeKey, int> lookup in edgeLookupCache.Values)
+            {
+                if (lookup.IsCreated)
+                    lookup.Dispose();
+            }
+
+            edgeLookupCache.Clear();
+
+            foreach (NativeParallelMultiHashMap<VertexKey, int> lookup in vertexLookupCache.Values)
+            {
+                if (lookup.IsCreated)
+                    lookup.Dispose();
+            }
+
+            vertexLookupCache.Clear();
+        }
+
         protected override void OnUpdate()
         {
             EntityManager entityManager = EntityManager;
 
             EntityQuery query = GetEntityQuery(typeof(GoldbergVoxelChunk));
 
-            using Unity.Collections.NativeArray<Entity> chunkEntities =
-                query.ToEntityArray(Unity.Collections.Allocator.Temp);
+            using NativeArray<Entity> chunkEntities =
+                query.ToEntityArray(Allocator.Temp);
 
             for (int i = 0; i < chunkEntities.Length; i++)
             {
@@ -47,8 +73,6 @@ namespace VoxelPlanet
                 if (!entityManager.Exists(chunk.PlanetEntity))
                     continue;
 
-                RemoveOldPlanetRenderComponents(entityManager, chunk.PlanetEntity);
-
                 GoldbergPlanetSettings settings =
                     entityManager.GetComponentData<GoldbergPlanetSettings>(chunk.PlanetEntity);
 
@@ -61,13 +85,34 @@ namespace VoxelPlanet
                 DynamicBuffer<VoxelColumn> columns =
                     entityManager.GetBuffer<VoxelColumn>(chunk.PlanetEntity);
 
+                DynamicBuffer<GoldbergChunkColumn> chunkColumns =
+                    entityManager.GetBuffer<GoldbergChunkColumn>(chunkEntity);
+
+                int chunkColumnCount = chunkColumns.Length;
+
+                NativeParallelMultiHashMap<EdgeKey, int> edgeToCells =
+                    GetOrCreateEdgeLookup(
+                        chunk.PlanetEntity,
+                        cells,
+                        cellVertices
+                    );
+
+                NativeParallelMultiHashMap<VertexKey, int> vertexToCells =
+                    GetOrCreateVertexLookup(
+                        chunk.PlanetEntity,
+                        cells,
+                        cellVertices
+                    );
+
                 Mesh mesh = BuildVoxelChunkMesh(
                     settings,
                     cells,
                     cellVertices,
                     columns,
-                    chunk.StartColumnIndex,
-                    chunk.ColumnCount
+                    chunkColumns,
+                    edgeToCells,
+                    vertexToCells,
+                    chunk.ChunkIndex
                 );
 
                 GoldbergChunkColliderBridge.SetChunkCollider(chunk.ChunkIndex, mesh);
@@ -113,16 +158,16 @@ namespace VoxelPlanet
                 entityManager.SetComponentData(chunkEntity, chunk);
 
                 Debug.Log(
-                    $"Goldberg chunk {chunk.ChunkIndex} mesh built. Vertices: {vertexCount}"
+                    $"Goldberg spatial chunk {chunk.ChunkIndex} mesh built. Vertices: {vertexCount}, Columns: {chunkColumnCount}"
                 );
 
-                // Build only one chunk per frame.
-                // This avoids DOTS buffer handles being invalidated by structural changes.
                 return;
             }
         }
 
-        private void RemoveOldPlanetRenderComponents(EntityManager entityManager, Entity planetEntity)
+        private void RemoveOldPlanetRenderComponents(
+            EntityManager entityManager,
+            Entity planetEntity)
         {
             if (entityManager.HasComponent<MaterialMeshInfo>(planetEntity))
                 entityManager.RemoveComponent<MaterialMeshInfo>(planetEntity);
@@ -134,230 +179,68 @@ namespace VoxelPlanet
                 entityManager.RemoveComponent<WorldRenderBounds>(planetEntity);
         }
 
-        private Mesh BuildVoxelChunkMesh(
-            GoldbergPlanetSettings settings,
-            DynamicBuffer<GoldbergCell> cells,
-            DynamicBuffer<GoldbergCellVertex> cellVertices,
-            DynamicBuffer<VoxelColumn> columns,
-            int startColumnIndex,
-            int columnCount)
-        {
-            List<Vector3> vertices = new List<Vector3>();
-            List<int> triangles = new List<int>();
-            List<Vector3> normals = new List<Vector3>();
-
-            Dictionary<int, int> surfaceLayersByCell = new Dictionary<int, int>();
-
-            for (int i = 0; i < columns.Length; i++)
-            {
-                surfaceLayersByCell[columns[i].CellIndex] = columns[i].SurfaceLayer;
-            }
-
-            Dictionary<EdgeKey, List<int>> edgeToCells =
-                BuildEdgeLookup(cells, cellVertices);
-
-            int endColumnIndex =
-                Mathf.Min(startColumnIndex + columnCount, columns.Length);
-
-            for (int c = startColumnIndex; c < endColumnIndex; c++)
-            {
-                VoxelColumn column = columns[c];
-                GoldbergCell cell = cells[column.CellIndex];
-
-                int surfaceLayer = column.SurfaceLayer;
-
-                float surfaceRadius =
-                    settings.Radius +
-                    ((surfaceLayer - settings.Layers / 2) * settings.CellHeight);
-
-                List<Vector3> topPolygon = GetCellPolygonAtRadius(
-                    cell,
-                    cellVertices,
-                    surfaceRadius
-                );
-
-                Vector3 normal =
-                    new Vector3(cell.Normal.x, cell.Normal.y, cell.Normal.z).normalized;
-
-                AddPolygonFace(
-                    topPolygon,
-                    normal,
-                    vertices,
-                    triangles,
-                    normals
-                );
-
-                AddNeighbourAwareSideWalls(
-                    settings,
-                    column.CellIndex,
-                    cell,
-                    cellVertices,
-                    surfaceLayer,
-                    surfaceLayersByCell,
-                    edgeToCells,
-                    vertices,
-                    triangles,
-                    normals
-                );
-            }
-
-            Mesh mesh = new Mesh();
-            mesh.name = "Goldberg Voxel Chunk Mesh";
-
-            if (vertices.Count > 65535)
-                mesh.indexFormat = IndexFormat.UInt32;
-
-            mesh.SetVertices(vertices);
-            mesh.SetTriangles(triangles, 0);
-            mesh.SetNormals(normals);
-            mesh.RecalculateBounds();
-
-            return mesh;
-        }
-
-        private List<Vector3> GetCellPolygonAtRadius(
-            GoldbergCell cell,
-            DynamicBuffer<GoldbergCellVertex> cellVertices,
-            float radius)
-        {
-            List<Vector3> polygon = new List<Vector3>();
-
-            for (int i = 0; i < cell.VertexCount; i++)
-            {
-                Vector3 p = cellVertices[cell.FirstVertexIndex + i].Position;
-                polygon.Add(p.normalized * radius);
-            }
-
-            return polygon;
-        }
-
-        private void AddPolygonFace(
-            List<Vector3> polygon,
-            Vector3 expectedNormal,
-            List<Vector3> vertices,
-            List<int> triangles,
-            List<Vector3> normals)
-        {
-            if (polygon.Count < 3)
-                return;
-
-            int centerIndex = vertices.Count;
-            Vector3 center = Vector3.zero;
-
-            for (int i = 0; i < polygon.Count; i++)
-                center += polygon[i];
-
-            center /= polygon.Count;
-
-            vertices.Add(center);
-            normals.Add(expectedNormal);
-
-            int first = vertices.Count;
-
-            for (int i = 0; i < polygon.Count; i++)
-            {
-                vertices.Add(polygon[i]);
-                normals.Add(expectedNormal);
-            }
-
-            for (int i = 0; i < polygon.Count; i++)
-            {
-                int next = (i + 1) % polygon.Count;
-
-                Vector3 a = vertices[first + i];
-                Vector3 b = vertices[first + next];
-
-                Vector3 triNormal =
-                    Vector3.Cross(a - center, b - center).normalized;
-
-                if (Vector3.Dot(triNormal, expectedNormal) >= 0f)
-                {
-                    triangles.Add(centerIndex);
-                    triangles.Add(first + i);
-                    triangles.Add(first + next);
-                }
-                else
-                {
-                    triangles.Add(centerIndex);
-                    triangles.Add(first + next);
-                    triangles.Add(first + i);
-                }
-            }
-        }
-
-        private void AddNeighbourAwareSideWalls(
-            GoldbergPlanetSettings settings,
-            int currentCellIndex,
-            GoldbergCell cell,
-            DynamicBuffer<GoldbergCellVertex> cellVertices,
-            int surfaceLayer,
-            Dictionary<int, int> surfaceLayersByCell,
-            Dictionary<EdgeKey, List<int>> edgeToCells,
-            List<Vector3> vertices,
-            List<int> triangles,
-            List<Vector3> normals)
-        {
-            float currentRadius =
-                settings.Radius +
-                ((surfaceLayer - settings.Layers / 2) * settings.CellHeight);
-
-            for (int i = 0; i < cell.VertexCount; i++)
-            {
-                int next = (i + 1) % cell.VertexCount;
-
-                Vector3 aBase =
-                    cellVertices[cell.FirstVertexIndex + i].Position;
-
-                Vector3 bBase =
-                    cellVertices[cell.FirstVertexIndex + next].Position;
-
-                EdgeKey edge = new EdgeKey(aBase, bBase);
-
-                int neighbourCellIndex =
-                    FindNeighbourForEdge(edge, currentCellIndex, edgeToCells);
-
-                if (neighbourCellIndex < 0)
-                    continue;
-
-                if (!surfaceLayersByCell.TryGetValue(
-                        neighbourCellIndex,
-                        out int neighbourSurfaceLayer))
-                    continue;
-
-                if (neighbourSurfaceLayer >= surfaceLayer)
-                    continue;
-
-                float neighbourRadius =
-                    settings.Radius +
-                    ((neighbourSurfaceLayer - settings.Layers / 2) * settings.CellHeight);
-
-                Vector3 aDir = aBase.normalized;
-                Vector3 bDir = bBase.normalized;
-
-                Vector3 aTop = aDir * currentRadius;
-                Vector3 bTop = bDir * currentRadius;
-
-                Vector3 aBottom = aDir * neighbourRadius;
-                Vector3 bBottom = bDir * neighbourRadius;
-
-                AddQuadFace(
-                    aBottom,
-                    bBottom,
-                    bTop,
-                    aTop,
-                    vertices,
-                    triangles,
-                    normals
-                );
-            }
-        }
-
-        private Dictionary<EdgeKey, List<int>> BuildEdgeLookup(
+        private NativeParallelMultiHashMap<EdgeKey, int> GetOrCreateEdgeLookup(
+            Entity planetEntity,
             DynamicBuffer<GoldbergCell> cells,
             DynamicBuffer<GoldbergCellVertex> cellVertices)
         {
-            Dictionary<EdgeKey, List<int>> edgeToCells =
-                new Dictionary<EdgeKey, List<int>>();
+            if (edgeLookupCache.TryGetValue(
+                    planetEntity,
+                    out NativeParallelMultiHashMap<EdgeKey, int> cachedLookup))
+            {
+                if (cachedLookup.IsCreated)
+                    return cachedLookup;
+            }
+
+            NativeParallelMultiHashMap<EdgeKey, int> edgeToCells =
+                new NativeParallelMultiHashMap<EdgeKey, int>(
+                    cells.Length * 6,
+                    Allocator.Persistent
+                );
+
+            for (int cellIndex = 0; cellIndex < cells.Length; cellIndex++)
+            {
+                GoldbergCell cell = cells[cellIndex];
+
+                for (int edgeIndex = 0; edgeIndex < cell.VertexCount; edgeIndex++)
+                {
+                    int next = (edgeIndex + 1) % cell.VertexCount;
+
+                    float3 a =
+                        cellVertices[cell.FirstVertexIndex + edgeIndex].Position;
+
+                    float3 b =
+                        cellVertices[cell.FirstVertexIndex + next].Position;
+
+                    edgeToCells.Add(new EdgeKey(a, b), cellIndex);
+                }
+            }
+
+            edgeLookupCache[planetEntity] = edgeToCells;
+
+            Debug.Log($"Cached Goldberg edge lookup. Cells: {cells.Length}");
+
+            return edgeToCells;
+        }
+
+        private NativeParallelMultiHashMap<VertexKey, int> GetOrCreateVertexLookup(
+            Entity planetEntity,
+            DynamicBuffer<GoldbergCell> cells,
+            DynamicBuffer<GoldbergCellVertex> cellVertices)
+        {
+            if (vertexLookupCache.TryGetValue(
+                    planetEntity,
+                    out NativeParallelMultiHashMap<VertexKey, int> cachedLookup))
+            {
+                if (cachedLookup.IsCreated)
+                    return cachedLookup;
+            }
+
+            NativeParallelMultiHashMap<VertexKey, int> vertexToCells =
+                new NativeParallelMultiHashMap<VertexKey, int>(
+                    cells.Length * 6,
+                    Allocator.Persistent
+                );
 
             for (int cellIndex = 0; cellIndex < cells.Length; cellIndex++)
             {
@@ -365,160 +248,162 @@ namespace VoxelPlanet
 
                 for (int i = 0; i < cell.VertexCount; i++)
                 {
-                    int next = (i + 1) % cell.VertexCount;
-
-                    Vector3 a =
+                    float3 p =
                         cellVertices[cell.FirstVertexIndex + i].Position;
 
-                    Vector3 b =
-                        cellVertices[cell.FirstVertexIndex + next].Position;
-
-                    EdgeKey key = new EdgeKey(a, b);
-
-                    if (!edgeToCells.TryGetValue(key, out List<int> list))
-                    {
-                        list = new List<int>();
-                        edgeToCells[key] = list;
-                    }
-
-                    list.Add(cellIndex);
+                    vertexToCells.Add(new VertexKey(p), cellIndex);
                 }
             }
 
-            return edgeToCells;
+            vertexLookupCache[planetEntity] = vertexToCells;
+
+            Debug.Log($"Cached Goldberg vertex lookup. Cells: {cells.Length}");
+
+            return vertexToCells;
         }
 
-        private int FindNeighbourForEdge(
-            EdgeKey edge,
-            int currentCellIndex,
-            Dictionary<EdgeKey, List<int>> edgeToCells)
+        private Mesh BuildVoxelChunkMesh(
+            GoldbergPlanetSettings settings,
+            DynamicBuffer<GoldbergCell> cells,
+            DynamicBuffer<GoldbergCellVertex> cellVertices,
+            DynamicBuffer<VoxelColumn> columns,
+            DynamicBuffer<GoldbergChunkColumn> chunkColumns,
+            NativeParallelMultiHashMap<EdgeKey, int> edgeToCells,
+            NativeParallelMultiHashMap<VertexKey, int> vertexToCells,
+            int chunkIndex)
         {
-            if (!edgeToCells.TryGetValue(edge, out List<int> cells))
-                return -1;
+            NativeArray<GoldbergCell> cellsArray =
+                cells.ToNativeArray(Allocator.TempJob);
 
-            for (int i = 0; i < cells.Count; i++)
+            NativeArray<GoldbergCellVertex> cellVerticesArray =
+                cellVertices.ToNativeArray(Allocator.TempJob);
+
+            NativeArray<VoxelColumn> columnsArray =
+                columns.ToNativeArray(Allocator.TempJob);
+
+            NativeArray<int> chunkColumnIndices =
+                new NativeArray<int>(chunkColumns.Length, Allocator.TempJob);
+
+            for (int i = 0; i < chunkColumns.Length; i++)
             {
-                if (cells[i] != currentCellIndex)
-                    return cells[i];
+                chunkColumnIndices[i] = chunkColumns[i].ColumnIndex;
             }
 
-            return -1;
-        }
+            NativeList<GoldbergMeshVertex> meshVertices =
+                new NativeList<GoldbergMeshVertex>(
+                    chunkColumns.Length * 96,
+                    Allocator.TempJob
+                );
 
-        private void AddQuadFace(
-            Vector3 v0,
-            Vector3 v1,
-            Vector3 v2,
-            Vector3 v3,
-            List<Vector3> vertices,
-            List<int> triangles,
-            List<Vector3> normals)
-        {
-            Vector3 normal =
-                Vector3.Cross(v1 - v0, v2 - v0).normalized;
+            NativeList<int> meshTriangles =
+                new NativeList<int>(
+                    chunkColumns.Length * 192,
+                    Allocator.TempJob
+                );
 
-            int start = vertices.Count;
+            NativeReference<int> debugEdgesChecked =
+                new NativeReference<int>(Allocator.TempJob);
 
-            vertices.Add(v0);
-            vertices.Add(v1);
-            vertices.Add(v2);
-            vertices.Add(v3);
+            NativeReference<int> debugNeighboursFound =
+                new NativeReference<int>(Allocator.TempJob);
 
-            normals.Add(normal);
-            normals.Add(normal);
-            normals.Add(normal);
-            normals.Add(normal);
+            NativeReference<int> debugDifferentHeightEdges =
+                new NativeReference<int>(Allocator.TempJob);
 
-            triangles.Add(start + 0);
-            triangles.Add(start + 1);
-            triangles.Add(start + 2);
+            NativeReference<int> debugWallsAdded =
+                new NativeReference<int>(Allocator.TempJob);
 
-            triangles.Add(start + 0);
-            triangles.Add(start + 2);
-            triangles.Add(start + 3);
-
-            triangles.Add(start + 2);
-            triangles.Add(start + 1);
-            triangles.Add(start + 0);
-
-            triangles.Add(start + 3);
-            triangles.Add(start + 2);
-            triangles.Add(start + 0);
-        }
-
-        private readonly struct EdgeKey
-        {
-            private readonly int ax;
-            private readonly int ay;
-            private readonly int az;
-            private readonly int bx;
-            private readonly int by;
-            private readonly int bz;
-
-            public EdgeKey(Vector3 a, Vector3 b)
+            GoldbergVoxelMeshBuildJob job = new GoldbergVoxelMeshBuildJob
             {
-                Vector3 an = a.normalized;
-                Vector3 bn = b.normalized;
+                Settings = settings,
 
-                int qax = Mathf.RoundToInt(an.x * 100000);
-                int qay = Mathf.RoundToInt(an.y * 100000);
-                int qaz = Mathf.RoundToInt(an.z * 100000);
+                Cells = cellsArray,
+                CellVertices = cellVerticesArray,
+                Columns = columnsArray,
+                ChunkColumnIndices = chunkColumnIndices,
 
-                int qbx = Mathf.RoundToInt(bn.x * 100000);
-                int qby = Mathf.RoundToInt(bn.y * 100000);
-                int qbz = Mathf.RoundToInt(bn.z * 100000);
+                EdgeToCells = edgeToCells,
+                VertexToCells = vertexToCells,
 
-                bool swap =
-                    qax > qbx ||
-                    qax == qbx && qay > qby ||
-                    qax == qbx && qay == qby && qaz > qbz;
+                Vertices = meshVertices,
+                Triangles = meshTriangles,
 
-                if (!swap)
-                {
-                    ax = qax;
-                    ay = qay;
-                    az = qaz;
+                DebugEdgesChecked = debugEdgesChecked,
+                DebugNeighboursFound = debugNeighboursFound,
+                DebugDifferentHeightEdges = debugDifferentHeightEdges,
+                DebugWallsAdded = debugWallsAdded
+            };
 
-                    bx = qbx;
-                    by = qby;
-                    bz = qbz;
-                }
-                else
-                {
-                    ax = qbx;
-                    ay = qby;
-                    az = qbz;
+            JobHandle handle = job.Schedule();
+            handle.Complete();
 
-                    bx = qax;
-                    by = qay;
-                    bz = qaz;
-                }
-            }
+            Debug.Log(
+                $"Chunk debug {chunkIndex}: " +
+                $"columns={chunkColumnIndices.Length}, " +
+                $"edges={debugEdgesChecked.Value}, " +
+                $"neighbours={debugNeighboursFound.Value}, " +
+                $"heightDiffs={debugDifferentHeightEdges.Value}, " +
+                $"walls={debugWallsAdded.Value}"
+            );
 
-            public override int GetHashCode()
-            {
-                unchecked
-                {
-                    int hash = ax;
-                    hash = hash * 397 ^ ay;
-                    hash = hash * 397 ^ az;
-                    hash = hash * 397 ^ bx;
-                    hash = hash * 397 ^ by;
-                    hash = hash * 397 ^ bz;
-                    return hash;
-                }
-            }
+            Mesh mesh = new Mesh();
+            mesh.name = $"Goldberg Voxel Spatial Chunk {chunkIndex}";
+            mesh.indexFormat = IndexFormat.UInt32;
 
-            public override bool Equals(object obj)
-            {
-                return obj is EdgeKey other &&
-                    ax == other.ax &&
-                    ay == other.ay &&
-                    az == other.az &&
-                    bx == other.bx &&
-                    by == other.by &&
-                    bz == other.bz;
-            }
+            mesh.SetVertexBufferParams(
+                meshVertices.Length,
+                new VertexAttributeDescriptor(
+                    VertexAttribute.Position,
+                    VertexAttributeFormat.Float32,
+                    3
+                ),
+                new VertexAttributeDescriptor(
+                    VertexAttribute.Normal,
+                    VertexAttributeFormat.Float32,
+                    3
+                )
+            );
+
+            mesh.SetVertexBufferData(
+                meshVertices.AsArray(),
+                0,
+                0,
+                meshVertices.Length
+            );
+
+            mesh.SetIndexBufferParams(
+                meshTriangles.Length,
+                mesh.indexFormat
+            );
+
+            mesh.SetIndexBufferData(
+                meshTriangles.AsArray(),
+                0,
+                0,
+                meshTriangles.Length
+            );
+
+            mesh.SetSubMesh(
+                0,
+                new SubMeshDescriptor(0, meshTriangles.Length)
+            );
+
+            mesh.RecalculateBounds();
+
+            debugWallsAdded.Dispose();
+            debugDifferentHeightEdges.Dispose();
+            debugNeighboursFound.Dispose();
+            debugEdgesChecked.Dispose();
+
+            meshTriangles.Dispose();
+            meshVertices.Dispose();
+
+            chunkColumnIndices.Dispose();
+            columnsArray.Dispose();
+            cellVerticesArray.Dispose();
+            cellsArray.Dispose();
+
+            return mesh;
         }
     }
 }

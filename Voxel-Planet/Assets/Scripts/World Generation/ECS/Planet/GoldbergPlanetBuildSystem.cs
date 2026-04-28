@@ -1,28 +1,16 @@
 using System.Collections.Generic;
 using Unity.Entities;
 using Unity.Mathematics;
-using Unity.Rendering;
-using Unity.Transforms;
 using UnityEngine;
-using UnityEngine.Rendering;
 
 namespace VoxelPlanet
 {
     public partial class GoldbergPlanetBuildSystem : SystemBase
     {
-        private Material material;
-
         protected override void OnCreate()
         {
             RequireForUpdate<GoldbergPlanetSettings>();
-
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-
-            material = new Material(shader);
-            material.name = "Goldberg Planet Material";
-            material.color = new Color(0.2f, 0.8f, 0.25f);
         }
-
         protected override void OnUpdate()
         {
             EntityManager entityManager = EntityManager;
@@ -154,48 +142,6 @@ namespace VoxelPlanet
             }
 
             Mesh mesh = new Mesh();
-            mesh.name = "Goldberg Planet Mesh";
-
-            if (meshVertices.Count > 65535)
-                mesh.indexFormat = IndexFormat.UInt32;
-
-            mesh.SetVertices(meshVertices);
-            mesh.SetTriangles(meshTriangles, 0);
-            mesh.SetNormals(meshNormals);
-            mesh.RecalculateBounds();
-
-            RenderMeshArray renderMeshArray = new RenderMeshArray(
-                new[] { material },
-                new[] { mesh }
-            );
-
-            RenderMeshDescription desc = new RenderMeshDescription(
-                shadowCastingMode: ShadowCastingMode.On,
-                receiveShadows: true
-            );
-
-            if (!entityManager.HasComponent<LocalTransform>(entity))
-            {
-                entityManager.AddComponentData(entity, LocalTransform.Identity);
-            }
-
-            int cellCount = cells.Length;
-            int vertexCount = mesh.vertexCount;
-
-            RenderMeshUtility.AddComponents(
-                entity,
-                entityManager,
-                desc,
-                renderMeshArray,
-                MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
-            );
-
-            entityManager.SetComponentData(
-                entity,
-                MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
-            );
-
-            Debug.Log($"Goldberg planet built. Cells: {cellCount}, Vertices: {vertexCount}");
         }
 
         private void BuildIcosphere(
