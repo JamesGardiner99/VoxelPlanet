@@ -6,7 +6,7 @@ using UnityEngine;
 
 namespace VoxelPlanet
 {
-    [UpdateAfter(typeof(GoldbergPlanetBuildSystem))]
+    [UpdateAfter(typeof(GoldbergVoxelNeighbourSystem))]
     public partial class GoldbergVoxelGenerationSystem : SystemBase
     {
         private const int ChunksPerCubeFace = 2;

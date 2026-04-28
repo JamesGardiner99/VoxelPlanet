@@ -17,6 +17,8 @@ namespace VoxelPlanet
         [ReadOnly] public NativeArray<GoldbergCell> Cells;
         [ReadOnly] public NativeArray<GoldbergCellVertex> CellVertices;
         [ReadOnly] public NativeArray<VoxelColumn> Columns;
+        [ReadOnly] public NativeArray<GoldbergCellNeighbour> Neighbours;
+        [ReadOnly] public NativeArray<int> CellSurfaceLayers;
         [ReadOnly] public NativeArray<int> ChunkColumnIndices;
 
         public GoldbergPlanetSettings Settings;
@@ -34,19 +36,100 @@ namespace VoxelPlanet
                     continue;
 
                 VoxelColumn column = Columns[columnIndex];
+
+                if (column.CellIndex < 0 || column.CellIndex >= Cells.Length)
+                    continue;
+
                 GoldbergCell cell = Cells[column.CellIndex];
 
                 int surfaceLayer = column.SurfaceLayer;
 
-                float surfaceRadius =
-                    Settings.Radius +
-                    ((surfaceLayer - Settings.Layers / 2f) * Settings.CellHeight);
-
+                float surfaceRadius = GetRadiusForLayer(surfaceLayer);
                 float3 normal = math.normalize(cell.Normal);
 
                 AddPolygonFace(cell, surfaceRadius, normal);
-                AddFullColumnWalls(cell, surfaceLayer);
+                AddVisibleColumnWalls(column.CellIndex, cell, surfaceLayer);
             }
+        }
+
+        private void AddVisibleColumnWalls(
+            int cellIndex,
+            GoldbergCell cell,
+            int surfaceLayer)
+        {
+            for (int edgeIndex = 0; edgeIndex < cell.VertexCount; edgeIndex++)
+            {
+                int neighbourCellIndex =
+                    FindNeighbourCellIndex(cellIndex, edgeIndex);
+
+                int neighbourSurfaceLayer = -1;
+
+                if (
+                    neighbourCellIndex >= 0 &&
+                    neighbourCellIndex < CellSurfaceLayers.Length
+                )
+                {
+                    neighbourSurfaceLayer =
+                        CellSurfaceLayers[neighbourCellIndex];
+                }
+
+                if (neighbourSurfaceLayer >= surfaceLayer)
+                    continue;
+
+                float topRadius = GetRadiusForLayer(surfaceLayer);
+
+                float bottomRadius =
+                    neighbourSurfaceLayer >= 0
+                        ? GetRadiusForLayer(neighbourSurfaceLayer)
+                        : GetRadiusForLayer(0);
+
+                AddWallForEdge(cell, edgeIndex, bottomRadius, topRadius);
+            }
+        }
+
+        private int FindNeighbourCellIndex(
+            int cellIndex,
+            int edgeIndex)
+        {
+            for (int i = 0; i < Neighbours.Length; i++)
+            {
+                GoldbergCellNeighbour neighbour = Neighbours[i];
+
+                if (
+                    neighbour.CellIndex == cellIndex &&
+                    neighbour.EdgeIndex == edgeIndex
+                )
+                {
+                    return neighbour.NeighbourCellIndex;
+                }
+            }
+
+            return -1;
+        }
+
+        private void AddWallForEdge(
+            GoldbergCell cell,
+            int edgeIndex,
+            float bottomRadius,
+            float topRadius)
+        {
+            int next = (edgeIndex + 1) % cell.VertexCount;
+
+            float3 aBase =
+                CellVertices[cell.FirstVertexIndex + edgeIndex].Position;
+
+            float3 bBase =
+                CellVertices[cell.FirstVertexIndex + next].Position;
+
+            float3 aDir = math.normalize(aBase);
+            float3 bDir = math.normalize(bBase);
+
+            AddQuadFace(
+                aDir * bottomRadius,
+                bDir * bottomRadius,
+                bDir * topRadius,
+                aDir * topRadius
+            );
         }
 
         private void AddPolygonFace(
@@ -113,40 +196,6 @@ namespace VoxelPlanet
             }
         }
 
-        private void AddFullColumnWalls(
-            GoldbergCell cell,
-            int surfaceLayer)
-        {
-            float topRadius =
-                Settings.Radius +
-                ((surfaceLayer - Settings.Layers / 2f) * Settings.CellHeight);
-
-            float bottomRadius =
-                Settings.Radius +
-                ((0 - Settings.Layers / 2f) * Settings.CellHeight);
-
-            for (int i = 0; i < cell.VertexCount; i++)
-            {
-                int next = (i + 1) % cell.VertexCount;
-
-                float3 aBase =
-                    CellVertices[cell.FirstVertexIndex + i].Position;
-
-                float3 bBase =
-                    CellVertices[cell.FirstVertexIndex + next].Position;
-
-                float3 aDir = math.normalize(aBase);
-                float3 bDir = math.normalize(bBase);
-
-                AddQuadFace(
-                    aDir * bottomRadius,
-                    bDir * bottomRadius,
-                    bDir * topRadius,
-                    aDir * topRadius
-                );
-            }
-        }
-
         private void AddQuadFace(
             float3 v0,
             float3 v1,
@@ -170,14 +219,12 @@ namespace VoxelPlanet
             Triangles.Add(start + 0);
             Triangles.Add(start + 2);
             Triangles.Add(start + 3);
+        }
 
-            Triangles.Add(start + 2);
-            Triangles.Add(start + 1);
-            Triangles.Add(start + 0);
-
-            Triangles.Add(start + 3);
-            Triangles.Add(start + 2);
-            Triangles.Add(start + 0);
+        private float GetRadiusForLayer(int layer)
+        {
+            return Settings.Radius +
+                   ((layer - Settings.Layers / 2f) * Settings.CellHeight);
         }
     }
 }

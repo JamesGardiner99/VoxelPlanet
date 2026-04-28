@@ -1,7 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
-using Unity.Mathematics;
 using Unity.Rendering;
 using Unity.Transforms;
 using UnityEngine;
@@ -59,6 +58,9 @@ namespace VoxelPlanet
                 DynamicBuffer<VoxelColumn> columns =
                     entityManager.GetBuffer<VoxelColumn>(chunk.PlanetEntity);
 
+                DynamicBuffer<GoldbergCellNeighbour> neighbours =
+                    entityManager.GetBuffer<GoldbergCellNeighbour>(chunk.PlanetEntity);
+
                 DynamicBuffer<GoldbergChunkColumn> chunkColumns =
                     entityManager.GetBuffer<GoldbergChunkColumn>(chunkEntity);
 
@@ -69,6 +71,7 @@ namespace VoxelPlanet
                     cells,
                     cellVertices,
                     columns,
+                    neighbours,
                     chunkColumns,
                     chunk.ChunkIndex
                 );
@@ -128,6 +131,7 @@ namespace VoxelPlanet
             DynamicBuffer<GoldbergCell> cells,
             DynamicBuffer<GoldbergCellVertex> cellVertices,
             DynamicBuffer<VoxelColumn> columns,
+            DynamicBuffer<GoldbergCellNeighbour> neighbours,
             DynamicBuffer<GoldbergChunkColumn> chunkColumns,
             int chunkIndex)
         {
@@ -143,6 +147,10 @@ namespace VoxelPlanet
                 new NativeArray<VoxelColumn>(columns.Length, Allocator.TempJob);
             columnsArray.CopyFrom(columns.AsNativeArray());
 
+            NativeArray<GoldbergCellNeighbour> neighboursArray =
+                new NativeArray<GoldbergCellNeighbour>(neighbours.Length, Allocator.TempJob);
+            neighboursArray.CopyFrom(neighbours.AsNativeArray());
+
             NativeArray<int> chunkColumnIndices =
                 new NativeArray<int>(chunkColumns.Length, Allocator.TempJob);
 
@@ -151,15 +159,33 @@ namespace VoxelPlanet
                 chunkColumnIndices[i] = chunkColumns[i].ColumnIndex;
             }
 
+            NativeArray<int> cellSurfaceLayers =
+                new NativeArray<int>(cells.Length, Allocator.TempJob);
+
+            for (int i = 0; i < cellSurfaceLayers.Length; i++)
+            {
+                cellSurfaceLayers[i] = -1;
+            }
+
+            for (int i = 0; i < columnsArray.Length; i++)
+            {
+                VoxelColumn column = columnsArray[i];
+
+                if (column.CellIndex < 0 || column.CellIndex >= cellSurfaceLayers.Length)
+                    continue;
+
+                cellSurfaceLayers[column.CellIndex] = column.SurfaceLayer;
+            }
+
             NativeList<GoldbergMeshVertex> meshVertices =
                 new NativeList<GoldbergMeshVertex>(
-                    chunkColumns.Length * 96,
+                    chunkColumns.Length * 64,
                     Allocator.TempJob
                 );
 
             NativeList<int> meshTriangles =
                 new NativeList<int>(
-                    chunkColumns.Length * 192,
+                    chunkColumns.Length * 128,
                     Allocator.TempJob
                 );
 
@@ -170,6 +196,8 @@ namespace VoxelPlanet
                 Cells = cellsArray,
                 CellVertices = cellVerticesArray,
                 Columns = columnsArray,
+                Neighbours = neighboursArray,
+                CellSurfaceLayers = cellSurfaceLayers,
                 ChunkColumnIndices = chunkColumnIndices,
 
                 Vertices = meshVertices,
@@ -225,7 +253,9 @@ namespace VoxelPlanet
 
             meshTriangles.Dispose();
             meshVertices.Dispose();
+            cellSurfaceLayers.Dispose();
             chunkColumnIndices.Dispose();
+            neighboursArray.Dispose();
             columnsArray.Dispose();
             cellVerticesArray.Dispose();
             cellsArray.Dispose();
