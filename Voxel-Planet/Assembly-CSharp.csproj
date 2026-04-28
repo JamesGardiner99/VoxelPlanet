@@ -80,9 +80,8 @@
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergPlanetBuildSystem.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\ECS Data\VoxelWorld.cs" />
     <Compile Include="Assets\Scripts\Player\PlanetPlayerController.cs" />
-    <Compile Include="Assets\Scripts\World Generation\ECS\ECS Data\GoldbergEdgeKey.cs" />
+    <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergCellNeighbour.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergPlanetAuthoring.cs" />
-    <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergVertexKey.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergChunkColliderBridge.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergVoxelChunk.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergVoxelGenerationSystem.cs" />
