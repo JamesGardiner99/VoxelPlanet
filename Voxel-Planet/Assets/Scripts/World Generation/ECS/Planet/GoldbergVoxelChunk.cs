@@ -14,6 +14,10 @@ namespace VoxelPlanet
         public int ColumnIndex;
     }
 
+    public struct GoldbergVoxelChunkNeedsMeshBuild : IComponentData
+    {
+    }
+
     public struct GoldbergVoxelChunksCreated : IComponentData
     {
     }

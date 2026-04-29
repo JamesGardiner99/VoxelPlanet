@@ -11,11 +11,13 @@ namespace VoxelPlanet
     [UpdateAfter(typeof(GoldbergVoxelGenerationSystem))]
     public partial class GoldbergVoxelMeshSystem : SystemBase
     {
+        private const int MaxChunkBuildsPerFrame = 4;
+
         private Material grassMaterial;
 
         protected override void OnCreate()
         {
-            RequireForUpdate<GoldbergVoxelChunk>();
+            RequireForUpdate<GoldbergVoxelChunkNeedsMeshBuild>();
 
             Shader shader = Shader.Find("Universal Render Pipeline/Lit");
 
@@ -28,10 +30,15 @@ namespace VoxelPlanet
         {
             EntityManager entityManager = EntityManager;
 
-            EntityQuery query = GetEntityQuery(typeof(GoldbergVoxelChunk));
+            EntityQuery query = GetEntityQuery(
+                ComponentType.ReadWrite<GoldbergVoxelChunk>(),
+                ComponentType.ReadOnly<GoldbergVoxelChunkNeedsMeshBuild>()
+            );
 
             using NativeArray<Entity> chunkEntities =
                 query.ToEntityArray(Allocator.Temp);
+
+            int builtThisFrame = 0;
 
             for (int i = 0; i < chunkEntities.Length; i++)
             {
@@ -41,10 +48,16 @@ namespace VoxelPlanet
                     entityManager.GetComponentData<GoldbergVoxelChunk>(chunkEntity);
 
                 if (chunk.NeedsMeshBuild == 0)
+                {
+                    entityManager.RemoveComponent<GoldbergVoxelChunkNeedsMeshBuild>(chunkEntity);
                     continue;
+                }
 
                 if (!entityManager.Exists(chunk.PlanetEntity))
+                {
+                    entityManager.RemoveComponent<GoldbergVoxelChunkNeedsMeshBuild>(chunkEntity);
                     continue;
+                }
 
                 GoldbergPlanetSettings settings =
                     entityManager.GetComponentData<GoldbergPlanetSettings>(chunk.PlanetEntity);
@@ -58,8 +71,11 @@ namespace VoxelPlanet
                 DynamicBuffer<VoxelColumn> columns =
                     entityManager.GetBuffer<VoxelColumn>(chunk.PlanetEntity);
 
-                DynamicBuffer<GoldbergCellNeighbour> neighbours =
-                    entityManager.GetBuffer<GoldbergCellNeighbour>(chunk.PlanetEntity);
+                if (!entityManager.HasBuffer<GoldbergCellNeighbourLookup>(chunk.PlanetEntity))
+                    continue;
+
+                DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookup =
+                    entityManager.GetBuffer<GoldbergCellNeighbourLookup>(chunk.PlanetEntity);
 
                 DynamicBuffer<GoldbergChunkColumn> chunkColumns =
                     entityManager.GetBuffer<GoldbergChunkColumn>(chunkEntity);
@@ -71,7 +87,7 @@ namespace VoxelPlanet
                     cells,
                     cellVertices,
                     columns,
-                    neighbours,
+                    neighbourLookup,
                     chunkColumns,
                     chunk.ChunkIndex
                 );
@@ -118,11 +134,16 @@ namespace VoxelPlanet
                 chunk.NeedsMeshBuild = 0;
                 entityManager.SetComponentData(chunkEntity, chunk);
 
+                entityManager.RemoveComponent<GoldbergVoxelChunkNeedsMeshBuild>(chunkEntity);
+
                 Debug.Log(
                     $"Goldberg spatial chunk {chunk.ChunkIndex} mesh built. Vertices: {vertexCount}, Columns: {chunkColumnCount}"
                 );
 
-                return;
+                builtThisFrame++;
+
+                if (builtThisFrame >= MaxChunkBuildsPerFrame)
+                    break;
             }
         }
 
@@ -131,7 +152,7 @@ namespace VoxelPlanet
             DynamicBuffer<GoldbergCell> cells,
             DynamicBuffer<GoldbergCellVertex> cellVertices,
             DynamicBuffer<VoxelColumn> columns,
-            DynamicBuffer<GoldbergCellNeighbour> neighbours,
+            DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
             DynamicBuffer<GoldbergChunkColumn> chunkColumns,
             int chunkIndex)
         {
@@ -146,10 +167,6 @@ namespace VoxelPlanet
             NativeArray<VoxelColumn> columnsArray =
                 new NativeArray<VoxelColumn>(columns.Length, Allocator.TempJob);
             columnsArray.CopyFrom(columns.AsNativeArray());
-
-            NativeArray<GoldbergCellNeighbour> neighboursArray =
-                new NativeArray<GoldbergCellNeighbour>(neighbours.Length, Allocator.TempJob);
-            neighboursArray.CopyFrom(neighbours.AsNativeArray());
 
             NativeArray<int> chunkColumnIndices =
                 new NativeArray<int>(chunkColumns.Length, Allocator.TempJob);
@@ -177,6 +194,17 @@ namespace VoxelPlanet
                 cellSurfaceLayers[column.CellIndex] = column.SurfaceLayer;
             }
 
+            NativeArray<int> neighbourLookup =
+                new NativeArray<int>(
+                    neighbourLookupBuffer.Length,
+                    Allocator.TempJob
+                );
+
+            for (int i = 0; i < neighbourLookupBuffer.Length; i++)
+            {
+                neighbourLookup[i] = neighbourLookupBuffer[i].NeighbourCellIndex;
+            }
+
             NativeList<GoldbergMeshVertex> meshVertices =
                 new NativeList<GoldbergMeshVertex>(
                     chunkColumns.Length * 64,
@@ -189,6 +217,12 @@ namespace VoxelPlanet
                     Allocator.TempJob
                 );
 
+            NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup =
+                new NativeParallelHashMap<GoldbergMeshVertexKey, int>(
+                    chunkColumns.Length * 64,
+                    Allocator.TempJob
+                );
+
             GoldbergVoxelMeshBuildJob job = new GoldbergVoxelMeshBuildJob
             {
                 Settings = settings,
@@ -196,12 +230,14 @@ namespace VoxelPlanet
                 Cells = cellsArray,
                 CellVertices = cellVerticesArray,
                 Columns = columnsArray,
-                Neighbours = neighboursArray,
                 CellSurfaceLayers = cellSurfaceLayers,
+                NeighbourLookup = neighbourLookup,
+                MaxEdgesPerCell = GoldbergNeighbourConstants.MaxEdgesPerCell,
                 ChunkColumnIndices = chunkColumnIndices,
 
                 Vertices = meshVertices,
-                Triangles = meshTriangles
+                Triangles = meshTriangles,
+                VertexLookup = vertexLookup
             };
 
             JobHandle handle = job.Schedule();
@@ -251,11 +287,12 @@ namespace VoxelPlanet
 
             mesh.RecalculateBounds();
 
+            vertexLookup.Dispose();
             meshTriangles.Dispose();
             meshVertices.Dispose();
+            neighbourLookup.Dispose();
             cellSurfaceLayers.Dispose();
             chunkColumnIndices.Dispose();
-            neighboursArray.Dispose();
             columnsArray.Dispose();
             cellVerticesArray.Dispose();
             cellsArray.Dispose();

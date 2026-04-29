@@ -1,3 +1,4 @@
+using System;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -11,20 +12,77 @@ namespace VoxelPlanet
         public float3 Normal;
     }
 
+    public struct GoldbergMeshVertexKey : IEquatable<GoldbergMeshVertexKey>
+    {
+        private const float Precision = 100000f;
+
+        private int px;
+        private int py;
+        private int pz;
+
+        private int nx;
+        private int ny;
+        private int nz;
+
+        public GoldbergMeshVertexKey(GoldbergMeshVertex vertex)
+        {
+            px = (int)math.round(vertex.Position.x * Precision);
+            py = (int)math.round(vertex.Position.y * Precision);
+            pz = (int)math.round(vertex.Position.z * Precision);
+
+            nx = (int)math.round(vertex.Normal.x * Precision);
+            ny = (int)math.round(vertex.Normal.y * Precision);
+            nz = (int)math.round(vertex.Normal.z * Precision);
+        }
+
+        public bool Equals(GoldbergMeshVertexKey other)
+        {
+            return px == other.px &&
+                   py == other.py &&
+                   pz == other.pz &&
+                   nx == other.nx &&
+                   ny == other.ny &&
+                   nz == other.nz;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is GoldbergMeshVertexKey other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                int hash = 17;
+                hash = hash * 31 + px;
+                hash = hash * 31 + py;
+                hash = hash * 31 + pz;
+                hash = hash * 31 + nx;
+                hash = hash * 31 + ny;
+                hash = hash * 31 + nz;
+                return hash;
+            }
+        }
+    }
+
     [BurstCompile]
     public struct GoldbergVoxelMeshBuildJob : IJob
     {
         [ReadOnly] public NativeArray<GoldbergCell> Cells;
         [ReadOnly] public NativeArray<GoldbergCellVertex> CellVertices;
         [ReadOnly] public NativeArray<VoxelColumn> Columns;
-        [ReadOnly] public NativeArray<GoldbergCellNeighbour> Neighbours;
         [ReadOnly] public NativeArray<int> CellSurfaceLayers;
+        [ReadOnly] public NativeArray<int> NeighbourLookup;
         [ReadOnly] public NativeArray<int> ChunkColumnIndices;
+
+        [ReadOnly] public int MaxEdgesPerCell;
 
         public GoldbergPlanetSettings Settings;
 
         public NativeList<GoldbergMeshVertex> Vertices;
         public NativeList<int> Triangles;
+        public NativeParallelHashMap<GoldbergMeshVertexKey, int> VertexLookup;
 
         public void Execute()
         {
@@ -91,20 +149,18 @@ namespace VoxelPlanet
             int cellIndex,
             int edgeIndex)
         {
-            for (int i = 0; i < Neighbours.Length; i++)
-            {
-                GoldbergCellNeighbour neighbour = Neighbours[i];
+            if (cellIndex < 0 || edgeIndex < 0)
+                return -1;
 
-                if (
-                    neighbour.CellIndex == cellIndex &&
-                    neighbour.EdgeIndex == edgeIndex
-                )
-                {
-                    return neighbour.NeighbourCellIndex;
-                }
-            }
+            if (edgeIndex >= MaxEdgesPerCell)
+                return -1;
 
-            return -1;
+            int lookupIndex = cellIndex * MaxEdgesPerCell + edgeIndex;
+
+            if (lookupIndex < 0 || lookupIndex >= NeighbourLookup.Length)
+                return -1;
+
+            return NeighbourLookup[lookupIndex];
         }
 
         private void AddWallForEdge(
@@ -150,33 +206,36 @@ namespace VoxelPlanet
 
             center /= cell.VertexCount;
 
-            int centerIndex = Vertices.Length;
-
-            Vertices.Add(new GoldbergMeshVertex
+            int centerIndex = GetOrAddVertex(new GoldbergMeshVertex
             {
                 Position = center,
                 Normal = expectedNormal
             });
 
-            int first = Vertices.Length;
+            FixedList128Bytes<int> ringIndices = default;
+            FixedList512Bytes<float3> ringPositions = default;
 
             for (int i = 0; i < cell.VertexCount; i++)
             {
                 float3 p = CellVertices[cell.FirstVertexIndex + i].Position;
+                float3 position = math.normalize(p) * radius;
 
-                Vertices.Add(new GoldbergMeshVertex
+                int index = GetOrAddVertex(new GoldbergMeshVertex
                 {
-                    Position = math.normalize(p) * radius,
+                    Position = position,
                     Normal = expectedNormal
                 });
+
+                ringIndices.Add(index);
+                ringPositions.Add(position);
             }
 
             for (int i = 0; i < cell.VertexCount; i++)
             {
                 int next = (i + 1) % cell.VertexCount;
 
-                float3 a = Vertices[first + i].Position;
-                float3 b = Vertices[first + next].Position;
+                float3 a = ringPositions[i];
+                float3 b = ringPositions[next];
 
                 float3 triNormal =
                     math.normalize(math.cross(a - center, b - center));
@@ -184,14 +243,14 @@ namespace VoxelPlanet
                 if (math.dot(triNormal, expectedNormal) >= 0f)
                 {
                     Triangles.Add(centerIndex);
-                    Triangles.Add(first + i);
-                    Triangles.Add(first + next);
+                    Triangles.Add(ringIndices[i]);
+                    Triangles.Add(ringIndices[next]);
                 }
                 else
                 {
                     Triangles.Add(centerIndex);
-                    Triangles.Add(first + next);
-                    Triangles.Add(first + i);
+                    Triangles.Add(ringIndices[next]);
+                    Triangles.Add(ringIndices[i]);
                 }
             }
         }
@@ -205,20 +264,32 @@ namespace VoxelPlanet
             float3 normal =
                 math.normalize(math.cross(v1 - v0, v2 - v0));
 
-            int start = Vertices.Length;
+            int i0 = GetOrAddVertex(new GoldbergMeshVertex { Position = v0, Normal = normal });
+            int i1 = GetOrAddVertex(new GoldbergMeshVertex { Position = v1, Normal = normal });
+            int i2 = GetOrAddVertex(new GoldbergMeshVertex { Position = v2, Normal = normal });
+            int i3 = GetOrAddVertex(new GoldbergMeshVertex { Position = v3, Normal = normal });
 
-            Vertices.Add(new GoldbergMeshVertex { Position = v0, Normal = normal });
-            Vertices.Add(new GoldbergMeshVertex { Position = v1, Normal = normal });
-            Vertices.Add(new GoldbergMeshVertex { Position = v2, Normal = normal });
-            Vertices.Add(new GoldbergMeshVertex { Position = v3, Normal = normal });
+            Triangles.Add(i0);
+            Triangles.Add(i1);
+            Triangles.Add(i2);
 
-            Triangles.Add(start + 0);
-            Triangles.Add(start + 1);
-            Triangles.Add(start + 2);
+            Triangles.Add(i0);
+            Triangles.Add(i2);
+            Triangles.Add(i3);
+        }
 
-            Triangles.Add(start + 0);
-            Triangles.Add(start + 2);
-            Triangles.Add(start + 3);
+        private int GetOrAddVertex(GoldbergMeshVertex vertex)
+        {
+            GoldbergMeshVertexKey key = new GoldbergMeshVertexKey(vertex);
+
+            if (VertexLookup.TryGetValue(key, out int existingIndex))
+                return existingIndex;
+
+            int newIndex = Vertices.Length;
+            Vertices.Add(vertex);
+            VertexLookup.TryAdd(key, newIndex);
+
+            return newIndex;
         }
 
         private float GetRadiusForLayer(int layer)

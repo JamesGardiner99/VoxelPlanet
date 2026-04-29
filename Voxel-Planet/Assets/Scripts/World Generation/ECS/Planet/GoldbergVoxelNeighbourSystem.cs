@@ -46,6 +46,11 @@ namespace VoxelPlanet
                     entityManager.AddBuffer<GoldbergCellNeighbour>(planetEntity);
                 }
 
+                if (!entityManager.HasBuffer<GoldbergCellNeighbourLookup>(planetEntity))
+                {
+                    entityManager.AddBuffer<GoldbergCellNeighbourLookup>(planetEntity);
+                }
+
                 // Re-fetch buffers AFTER any structural changes.
                 DynamicBuffer<GoldbergCell> cells =
                     entityManager.GetBuffer<GoldbergCell>(planetEntity);
@@ -56,7 +61,21 @@ namespace VoxelPlanet
                 DynamicBuffer<GoldbergCellNeighbour> neighbours =
                     entityManager.GetBuffer<GoldbergCellNeighbour>(planetEntity);
 
+                DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookup =
+                    entityManager.GetBuffer<GoldbergCellNeighbourLookup>(planetEntity);
+
                 neighbours.Clear();
+                neighbourLookup.Clear();
+
+                int lookupLength = cells.Length * GoldbergNeighbourConstants.MaxEdgesPerCell;
+
+                for (int i = 0; i < lookupLength; i++)
+                {
+                    neighbourLookup.Add(new GoldbergCellNeighbourLookup
+                    {
+                        NeighbourCellIndex = -1
+                    });
+                }
 
                 Dictionary<GoldbergEdgeKey, EdgeOwner> edgeOwners =
                     new Dictionary<GoldbergEdgeKey, EdgeOwner>();
@@ -95,6 +114,28 @@ namespace VoxelPlanet
                                 EdgeIndex = other.EdgeIndex
                             });
 
+                            int lookupIndex =
+                                cellIndex * GoldbergNeighbourConstants.MaxEdgesPerCell + edgeIndex;
+
+                            int otherLookupIndex =
+                                other.CellIndex * GoldbergNeighbourConstants.MaxEdgesPerCell + other.EdgeIndex;
+
+                            if (lookupIndex >= 0 && lookupIndex < neighbourLookup.Length)
+                            {
+                                neighbourLookup[lookupIndex] = new GoldbergCellNeighbourLookup
+                                {
+                                    NeighbourCellIndex = other.CellIndex
+                                };
+                            }
+
+                            if (otherLookupIndex >= 0 && otherLookupIndex < neighbourLookup.Length)
+                            {
+                                neighbourLookup[otherLookupIndex] = new GoldbergCellNeighbourLookup
+                                {
+                                    NeighbourCellIndex = cellIndex
+                                };
+                            }
+
                             sharedEdges++;
                         }
                         else
@@ -111,12 +152,13 @@ namespace VoxelPlanet
                 int cellCount = cells.Length;
                 int neighbourCount = neighbours.Length;
                 int boundaryEdges = edgeOwners.Count - sharedEdges;
+                int lookupCount = neighbourLookup.Length;
 
                 // Do this LAST, after reading buffer lengths.
                 entityManager.AddComponent<GoldbergNeighboursBuilt>(planetEntity);
 
                 Debug.Log(
-                    $"Goldberg neighbours built. Cells: {cellCount}, Shared edges: {sharedEdges}, Boundary edges: {boundaryEdges}, Neighbour entries: {neighbourCount}"
+                    $"Goldberg neighbours built. Cells: {cellCount}, Shared edges: {sharedEdges}, Boundary edges: {boundaryEdges}, Neighbour entries: {neighbourCount}, Lookup entries: {lookupCount}"
                 );
             }
         }

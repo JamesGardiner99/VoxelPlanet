@@ -110,6 +110,8 @@ namespace VoxelPlanet
                         NeedsMeshBuild = 1
                     });
 
+                    ecb.AddComponent<GoldbergVoxelChunkNeedsMeshBuild>(chunkEntity);
+
                     DynamicBuffer<GoldbergChunkColumn> chunkColumns =
                         ecb.AddBuffer<GoldbergChunkColumn>(chunkEntity);
 
