@@ -111,10 +111,12 @@ namespace VoxelPlanet
         }
 
         private void AddVisibleColumnWalls(
-            int cellIndex,
-            GoldbergCell cell,
-            int surfaceLayer)
+    int cellIndex,
+    GoldbergCell cell,
+    int surfaceLayer)
         {
+            float topRadius = GetRadiusForLayer(surfaceLayer);
+
             for (int edgeIndex = 0; edgeIndex < cell.VertexCount; edgeIndex++)
             {
                 int neighbourCellIndex =
@@ -131,15 +133,19 @@ namespace VoxelPlanet
                         CellSurfaceLayers[neighbourCellIndex];
                 }
 
+                // Greedy rule:
+                // Only the higher cell creates the wall.
                 if (neighbourSurfaceLayer >= surfaceLayer)
                     continue;
-
-                float topRadius = GetRadiusForLayer(surfaceLayer);
 
                 float bottomRadius =
                     neighbourSurfaceLayer >= 0
                         ? GetRadiusForLayer(neighbourSurfaceLayer)
                         : GetRadiusForLayer(0);
+
+                // Avoid tiny/invalid wall faces.
+                if (topRadius <= bottomRadius + 0.0001f)
+                    continue;
 
                 AddWallForEdge(cell, edgeIndex, bottomRadius, topRadius);
             }
