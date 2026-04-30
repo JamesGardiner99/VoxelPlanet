@@ -1,4 +1,5 @@
 using Unity.Entities;
+using Unity.Mathematics;
 
 namespace VoxelPlanet
 {
@@ -7,6 +8,8 @@ namespace VoxelPlanet
         public Entity PlanetEntity;
         public int ChunkIndex;
         public byte NeedsMeshBuild;
+        public byte IsMeshBuilt;
+        public float3 Center;
     }
 
     public struct GoldbergChunkColumn : IBufferElementData

@@ -5,42 +5,48 @@ namespace VoxelPlanet
 {
     public class GoldbergPlanetAuthoring : MonoBehaviour
     {
-        [Header("Goldberg Planet")]
-        public float radius = 128f;
-        public float cellHeight = 1f;
+        [Header("Planet Shape")]
+        public float Radius;
+        public float CellHeight = 1f;
+        public int Subdivisions = 4;
+        public int Layers = 16;
 
-        [Range(0, 4)]
-        public int subdivisions = 4;
+        [Header("Voxel Generation")]
+        public int OceanLevel = 8;
+        public uint Seed = 12345;
 
-        public int layers = 32;
-        public int oceanLevel = 0;
-        public uint seed = 12345;
-    }
+        [Header("Build Flags")]
+        public bool GenerateOnStart = true;
 
-    public class GoldbergPlanetBaker : Baker<GoldbergPlanetAuthoring>
-    {
-        public override void Bake(GoldbergPlanetAuthoring authoring)
+        private class Baker : Baker<GoldbergPlanetAuthoring>
         {
-            Entity entity = GetEntity(TransformUsageFlags.Dynamic);
-
-            AddComponent<GoldbergPlanetTag>(entity);
-
-            AddComponent(entity, new GoldbergPlanetSettings
+            public override void Bake(GoldbergPlanetAuthoring authoring)
             {
-                Radius = authoring.radius,
-                CellHeight = authoring.cellHeight,
-                Subdivisions = authoring.subdivisions,
-                Layers = authoring.layers,
-                OceanLevel = authoring.oceanLevel,
-                Seed = authoring.seed,
-                NeedsBuild = 1,
-                NeedsColumnGeneration = 0,
-                NeedsVoxelMeshBuild = 0
-            });
+                AddComponent<PlanetPlayerTag>(GetEntity(TransformUsageFlags.Dynamic));
+                Entity entity = GetEntity(TransformUsageFlags.Dynamic);
 
-            AddBuffer<GoldbergCell>(entity);
-            AddBuffer<GoldbergCellVertex>(entity);
-            AddBuffer<VoxelColumn>(entity);
+                AddComponent(entity, new GoldbergPlanetSettings
+                {
+                    Radius = authoring.Radius,
+                    CellHeight = authoring.CellHeight,
+                    Subdivisions = authoring.Subdivisions,
+                    Layers = authoring.Layers,
+                    OceanLevel = authoring.OceanLevel,
+                    Seed = authoring.Seed,
+
+                    NeedsGoldbergBuild = authoring.GenerateOnStart ? (byte)1 : (byte)0,
+                    NeedsColumnGeneration = 0,
+                    NeedsVoxelMeshBuild = 0
+                });
+
+                AddComponent<GoldbergPlanetTag>(entity);
+
+                AddBuffer<GoldbergCell>(entity);
+                AddBuffer<GoldbergCellVertex>(entity);
+                AddBuffer<VoxelColumn>(entity);
+                AddBuffer<GoldbergCellNeighbour>(entity);
+                AddBuffer<GoldbergCellNeighbourLookup>(entity);
+            }
         }
     }
 }

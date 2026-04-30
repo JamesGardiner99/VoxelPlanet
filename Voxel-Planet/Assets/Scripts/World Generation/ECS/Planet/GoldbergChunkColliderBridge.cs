@@ -43,7 +43,6 @@ namespace VoxelPlanet
                 chunkObject.transform.localRotation = Quaternion.identity;
                 chunkObject.transform.localScale = Vector3.one;
 
-                // Make sure this matches your player's groundMask
                 chunkObject.layer = LayerMask.NameToLayer("Default");
 
                 meshCollider = chunkObject.AddComponent<MeshCollider>();
@@ -54,8 +53,17 @@ namespace VoxelPlanet
 
             meshCollider.sharedMesh = null;
             meshCollider.sharedMesh = mesh;
+        }
 
-            Debug.Log($"Collider set for chunk {chunkIndex}. Vertices: {mesh.vertexCount}");
+        public static void ClearChunkCollider(int chunkIndex)
+        {
+            if (Instance == null)
+                return;
+
+            if (Instance.chunkColliders.TryGetValue(chunkIndex, out MeshCollider meshCollider))
+            {
+                meshCollider.sharedMesh = null;
+            }
         }
     }
 }

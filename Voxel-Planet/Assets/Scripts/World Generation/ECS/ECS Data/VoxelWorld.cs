@@ -12,7 +12,7 @@ namespace VoxelPlanet
         public int OceanLevel;
         public uint Seed;
 
-        public byte NeedsBuild;
+        public byte NeedsGoldbergBuild;
         public byte NeedsColumnGeneration;
         public byte NeedsVoxelMeshBuild;
     }

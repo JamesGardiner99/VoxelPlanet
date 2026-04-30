@@ -3,6 +3,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
+using Unity.Transforms;
 
 namespace VoxelPlanet
 {
@@ -103,14 +104,44 @@ namespace VoxelPlanet
                 {
                     Entity chunkEntity = ecb.CreateEntity();
 
+                    float3 chunkCenter = float3.zero;
+                    int count = 0;
+
+                    for (int c = 0; c < pair.Value.Count; c++)
+                    {
+                        int columnIndex = pair.Value[c];
+
+                        if (columnIndex < 0 || columnIndex >= columns.Length)
+                            continue;
+
+                        int cellIndex = columns[columnIndex].CellIndex;
+
+                        if (cellIndex < 0 || cellIndex >= cells.Length)
+                            continue;
+
+                        chunkCenter += cells[cellIndex].Center;
+                        count++;
+                    }
+
+                    if (count > 0)
+                    {
+                        chunkCenter /= count;
+                    }
+
+                    ecb.AddComponent(chunkEntity, LocalTransform.Identity);
+                    ecb.AddComponent(chunkEntity, new LocalToWorld
+                    {
+                        Value = float4x4.identity
+                    });
+
                     ecb.AddComponent(chunkEntity, new GoldbergVoxelChunk
                     {
                         PlanetEntity = planetEntity,
                         ChunkIndex = pair.Key,
-                        NeedsMeshBuild = 1
+                        NeedsMeshBuild = 0,
+                        IsMeshBuilt = 0,
+                        Center = chunkCenter
                     });
-
-                    ecb.AddComponent<GoldbergVoxelChunkNeedsMeshBuild>(chunkEntity);
 
                     DynamicBuffer<GoldbergChunkColumn> chunkColumns =
                         ecb.AddBuffer<GoldbergChunkColumn>(chunkEntity);
@@ -131,9 +162,9 @@ namespace VoxelPlanet
 
                 ecb.AddComponent<GoldbergVoxelChunksCreated>(planetEntity);
 
-                Debug.Log(
+                /*Debug.Log(
                     $"Generated Goldberg voxel columns: {columns.Length}. Created chunks: {chunkToColumns.Count}"
-                );
+                );*/
             }
 
             ecb.Playback(entityManager);

@@ -149,7 +149,7 @@ Transform:
   m_GameObject: {fileID: 591393059}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0.70284235, y: 0.01831901, z: 1.8590014}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -167,12 +167,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 01eff7d004a390d4ebfb76a19810656f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  radius: 32
-  cellHeight: 1
-  subdivisions: 4
-  layers: 32
-  oceanLevel: 0
-  seed: 12345
+  Radius: 100
+  CellHeight: 1
+  Subdivisions: 7
+  Layers: 16
+  OceanLevel: 8
+  Seed: 12345
+  GenerateOnStart: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

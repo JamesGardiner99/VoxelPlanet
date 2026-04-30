@@ -5,30 +5,44 @@ using Unity.Rendering;
 using Unity.Transforms;
 using UnityEngine;
 using UnityEngine.Rendering;
+using System.Collections.Generic;
 
 namespace VoxelPlanet
 {
     [UpdateAfter(typeof(GoldbergVoxelGenerationSystem))]
     public partial class GoldbergVoxelMeshSystem : SystemBase
     {
-        private const int MaxChunkBuildsPerFrame = 4;
+        private const int MaxChunkBuildsPerFrame = 1;
+        private const int MaxColliderUpdatesPerFrame = 1;
+
+        private readonly Queue<PendingChunkCollider> pendingColliders = new();
+
+        private struct PendingChunkCollider
+        {
+            public Entity ChunkEntity;
+            public int ChunkIndex;
+            public Mesh Mesh;
+        }
 
         private Material grassMaterial;
 
         protected override void OnCreate()
         {
-            RequireForUpdate<GoldbergVoxelChunkNeedsMeshBuild>();
+            RequireForUpdate<GoldbergVoxelChunk>();
 
             Shader shader = Shader.Find("Universal Render Pipeline/Lit");
 
             grassMaterial = new Material(shader);
             grassMaterial.name = "Goldberg Voxel Grass";
             grassMaterial.color = Color.green;
+            grassMaterial.enableInstancing = true;
         }
 
         protected override void OnUpdate()
         {
             EntityManager entityManager = EntityManager;
+
+            ProcessPendingColliders(entityManager);
 
             EntityQuery query = GetEntityQuery(
                 ComponentType.ReadWrite<GoldbergVoxelChunk>(),
@@ -92,7 +106,21 @@ namespace VoxelPlanet
                     chunk.ChunkIndex
                 );
 
-                GoldbergChunkColliderBridge.SetChunkCollider(chunk.ChunkIndex, mesh);
+                GoldbergChunkMeshCache.Set(chunk.ChunkIndex, mesh);     
+
+                pendingColliders.Enqueue(new PendingChunkCollider
+                {
+                    ChunkEntity = chunkEntity,
+                    ChunkIndex = chunk.ChunkIndex,
+                    Mesh = mesh
+                });
+
+                Debug.Log(
+                    $"[MESH] Chunk {chunk.ChunkIndex} vertices: {mesh.vertexCount}, " +
+                    $"bounds center: {mesh.bounds.center}, size: {mesh.bounds.size}"
+                );
+
+                
 
                 int vertexCount = mesh.vertexCount;
 
@@ -111,34 +139,31 @@ namespace VoxelPlanet
                     entityManager.AddComponentData(chunkEntity, LocalTransform.Identity);
                 }
 
-                if (!entityManager.HasComponent<MaterialMeshInfo>(chunkEntity))
+                if (entityManager.HasComponent<MaterialMeshInfo>(chunkEntity))
                 {
-                    RenderMeshUtility.AddComponents(
-                        chunkEntity,
-                        entityManager,
-                        desc,
-                        renderMeshArray,
-                        MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
-                    );
+                    entityManager.RemoveComponent<MaterialMeshInfo>(chunkEntity);
                 }
-                else
-                {
-                    entityManager.SetSharedComponentManaged(chunkEntity, renderMeshArray);
 
-                    entityManager.SetComponentData(
-                        chunkEntity,
-                        MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
-                    );
-                }
+                RenderMeshUtility.AddComponents(
+                    chunkEntity,
+                    entityManager,
+                    desc,
+                    renderMeshArray,
+                    MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
+                );
 
                 chunk.NeedsMeshBuild = 0;
-                entityManager.SetComponentData(chunkEntity, chunk);
+                chunk.IsMeshBuilt = 1;
 
+                if(entityManager.HasComponent<DisableRendering>(chunkEntity))
+                {
+                    entityManager.RemoveComponent<DisableRendering>(chunkEntity);
+                }
+                
+                entityManager.SetComponentData(chunkEntity, chunk);
                 entityManager.RemoveComponent<GoldbergVoxelChunkNeedsMeshBuild>(chunkEntity);
 
-                Debug.Log(
-                    $"Goldberg spatial chunk {chunk.ChunkIndex} mesh built. Vertices: {vertexCount}, Columns: {chunkColumnCount}"
-                );
+                //Debug.Log( $"Goldberg spatial chunk {chunk.ChunkIndex} mesh built. Vertices: {vertexCount}, Columns: {chunkColumnCount}";
 
                 builtThisFrame++;
 
@@ -286,6 +311,12 @@ namespace VoxelPlanet
             );
 
             mesh.RecalculateBounds();
+            mesh.UploadMeshData(false);
+
+            Debug.Log(
+                   $"[MESH] Finalized chunk {chunkIndex} mesh. Vertices: {mesh.vertexCount}, " +
+                   $"bounds center: {mesh.bounds.center}, size: {mesh.bounds.size}"
+                );
 
             vertexLookup.Dispose();
             meshTriangles.Dispose();
@@ -298,6 +329,35 @@ namespace VoxelPlanet
             cellsArray.Dispose();
 
             return mesh;
+        }
+        
+        private void ProcessPendingColliders(EntityManager entityManager)
+        {
+            int processed = 0;
+
+            while (pendingColliders.Count > 0 && processed < MaxColliderUpdatesPerFrame)
+            {
+                PendingChunkCollider pending = pendingColliders.Dequeue();
+
+                if (!entityManager.Exists(pending.ChunkEntity))
+                    continue;
+
+                GoldbergVoxelChunk chunk =
+                    entityManager.GetComponentData<GoldbergVoxelChunk>(pending.ChunkEntity);
+
+                if (chunk.IsMeshBuilt == 0)
+                    continue;
+
+                if (entityManager.HasComponent<DisableRendering>(pending.ChunkEntity))
+                    continue;
+
+                GoldbergChunkColliderBridge.SetChunkCollider(
+                    pending.ChunkIndex,
+                    pending.Mesh
+                );
+
+                processed++;
+            }
         }
     }
 }

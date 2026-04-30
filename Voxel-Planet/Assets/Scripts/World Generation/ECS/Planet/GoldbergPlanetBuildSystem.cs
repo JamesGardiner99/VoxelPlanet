@@ -11,6 +11,7 @@ namespace VoxelPlanet
         {
             RequireForUpdate<GoldbergPlanetSettings>();
         }
+        
         protected override void OnUpdate()
         {
             EntityManager entityManager = EntityManager;
@@ -31,8 +32,16 @@ namespace VoxelPlanet
                 GoldbergPlanetSettings settings =
                     entityManager.GetComponentData<GoldbergPlanetSettings>(entity);
 
-                if (settings.NeedsBuild == 0)
+                Debug.Log($"Building planet with settings.Radius: {settings.Radius}, Subdivisions: {settings.Subdivisions}, Layers: {settings.Layers}");
+
+                if (settings.NeedsGoldbergBuild == 0)
                     continue;
+
+                Debug.Log(
+                    $"[SYSTEM] Entity: {entity} | " +
+                    $"settings.Radius: {settings.Radius} | " +
+                    $"settings.Subdivisions: {settings.Subdivisions}"
+                );
 
                 DynamicBuffer<GoldbergCell> cells =
                     entityManager.GetBuffer<GoldbergCell>(entity);
@@ -48,7 +57,7 @@ namespace VoxelPlanet
                     cellVertices
                 );
 
-                settings.NeedsBuild = 0;
+                settings.NeedsGoldbergBuild = 0;
                 settings.NeedsColumnGeneration = 1;
 
                 entityManager.SetComponentData(entity, settings);
