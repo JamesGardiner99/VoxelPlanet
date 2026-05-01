@@ -58,9 +58,6 @@ namespace VoxelPlanet
                 hash = hash * 31 + px;
                 hash = hash * 31 + py;
                 hash = hash * 31 + pz;
-                hash = hash * 31 + nx;
-                hash = hash * 31 + ny;
-                hash = hash * 31 + nz;
                 return hash;
             }
         }
@@ -102,10 +99,10 @@ namespace VoxelPlanet
 
                 int surfaceLayer = column.SurfaceLayer;
 
-                float surfaceRadius = GetRadiusForLayer(surfaceLayer);
+                //float surfaceRadius = GetRadiusForLayer(surfaceLayer);
                 float3 normal = math.normalize(cell.Normal);
 
-                AddPolygonFace(cell, surfaceRadius, normal);
+                //AddPolygonFace(cell, surfaceRadius, normal);
                 AddVisibleColumnWalls(column.CellIndex, cell, surfaceLayer);
             }
         }

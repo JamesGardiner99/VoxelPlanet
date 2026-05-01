@@ -10,7 +10,7 @@ namespace VoxelPlanet
     [UpdateAfter(typeof(GoldbergVoxelNeighbourSystem))]
     public partial class GoldbergVoxelGenerationSystem : SystemBase
     {
-        private const int ChunksPerCubeFace = 2;
+        private const int ChunksPerCubeFace = 4;
 
         protected override void OnCreate()
         {

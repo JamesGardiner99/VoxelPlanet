@@ -77,6 +77,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\PlanetPlayerTag.cs" />
+    <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergRegionBoundaryDebug.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\PlanetPlayerAuthoring.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergVoxelMeshBuildJob.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergChunkMeshCache.cs" />
@@ -88,6 +89,7 @@
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergEdgeKey.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergChunkStreamingSystem.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergPlanetAuthoring.cs" />
+    <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergTopRegionBuildJob.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\ECS Data\GoldbergCellNeighbour.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergChunkColliderBridge.cs" />
     <Compile Include="Assets\Scripts\World Generation\ECS\Planet\GoldbergVoxelChunk.cs" />

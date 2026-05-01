@@ -3,6 +3,7 @@ using Unity.Entities;
 using Unity.Jobs;
 using Unity.Rendering;
 using Unity.Transforms;
+using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
 using System.Collections.Generic;
@@ -22,6 +23,12 @@ namespace VoxelPlanet
             public Entity ChunkEntity;
             public int ChunkIndex;
             public Mesh Mesh;
+        }
+
+        private struct Edge
+        {
+            public Vector3 A;
+            public Vector3 B;
         }
 
         private Material grassMaterial;
@@ -95,6 +102,14 @@ namespace VoxelPlanet
                     entityManager.GetBuffer<GoldbergChunkColumn>(chunkEntity);
 
                 int chunkColumnCount = chunkColumns.Length;
+
+                DrawRegionBoundaryDebug(
+                    cells,
+                    cellVertices,
+                    columns,
+                    neighbourLookup,
+                    chunkColumns
+                );
 
                 Mesh mesh = BuildVoxelChunkMesh(
                     settings,
@@ -268,6 +283,18 @@ namespace VoxelPlanet
             JobHandle handle = job.Schedule();
             handle.Complete();
 
+            AddMergedTopFaces(
+                settings,
+                cells,
+                cellVertices,
+                columns,
+                neighbourLookupBuffer,
+                chunkColumns,
+                meshVertices,
+                meshTriangles,
+                vertexLookup
+            );
+
             Mesh mesh = new Mesh();
             mesh.name = $"Goldberg Voxel Spatial Chunk {chunkIndex}";
             mesh.indexFormat = IndexFormat.UInt32;
@@ -330,7 +357,7 @@ namespace VoxelPlanet
 
             return mesh;
         }
-        
+
         private void ProcessPendingColliders(EntityManager entityManager)
         {
             int processed = 0;
@@ -349,7 +376,10 @@ namespace VoxelPlanet
                     continue;
 
                 if (entityManager.HasComponent<DisableRendering>(pending.ChunkEntity))
-                    continue;
+                {
+                    pendingColliders.Enqueue(pending);
+                    break;
+                }
 
                 GoldbergChunkColliderBridge.SetChunkCollider(
                     pending.ChunkIndex,
@@ -358,6 +388,664 @@ namespace VoxelPlanet
 
                 processed++;
             }
+        }
+
+        private void DrawRegionBoundaryDebug(
+    DynamicBuffer<GoldbergCell> cells,
+    DynamicBuffer<GoldbergCellVertex> cellVertices,
+    DynamicBuffer<VoxelColumn> columns,
+    DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
+    DynamicBuffer<GoldbergChunkColumn> chunkColumns)
+        {
+            int maxEdgesPerCell = GoldbergNeighbourConstants.MaxEdgesPerCell;
+
+            int[] cellSurfaceLayers = new int[cells.Length];
+
+            for (int i = 0; i < cellSurfaceLayers.Length; i++)
+                cellSurfaceLayers[i] = -1;
+
+            for (int i = 0; i < columns.Length; i++)
+            {
+                VoxelColumn column = columns[i];
+
+                if (column.CellIndex >= 0 && column.CellIndex < cellSurfaceLayers.Length)
+                    cellSurfaceLayers[column.CellIndex] = column.SurfaceLayer;
+            }
+
+            for (int i = 0; i < chunkColumns.Length; i++)
+            {
+                int columnIndex = chunkColumns[i].ColumnIndex;
+
+                if (columnIndex < 0 || columnIndex >= columns.Length)
+                    continue;
+
+                VoxelColumn column = columns[columnIndex];
+
+                if (column.CellIndex < 0 || column.CellIndex >= cells.Length)
+                    continue;
+
+                GoldbergCell cell = cells[column.CellIndex];
+                int surfaceLayer = column.SurfaceLayer;
+
+                for (int edgeIndex = 0; edgeIndex < cell.VertexCount; edgeIndex++)
+                {
+                    int lookupIndex = column.CellIndex * maxEdgesPerCell + edgeIndex;
+
+                    int neighbourCellIndex = -1;
+
+                    if (lookupIndex >= 0 && lookupIndex < neighbourLookupBuffer.Length)
+                        neighbourCellIndex = neighbourLookupBuffer[lookupIndex].NeighbourCellIndex;
+
+                    int neighbourSurfaceLayer = -1;
+
+                    if (neighbourCellIndex >= 0 && neighbourCellIndex < cellSurfaceLayers.Length)
+                        neighbourSurfaceLayer = cellSurfaceLayers[neighbourCellIndex];
+
+                    // Same-height neighbour = internal edge, not region boundary.
+                    if (neighbourSurfaceLayer == surfaceLayer)
+                        continue;
+
+                    int next = (edgeIndex + 1) % cell.VertexCount;
+
+                    Vector3 a = cellVertices[cell.FirstVertexIndex + edgeIndex].Position;
+                    Vector3 b = cellVertices[cell.FirstVertexIndex + next].Position;
+
+                    Debug.DrawLine(a, b, Color.yellow, 10f);
+                }
+            }
+        }
+
+        private void AddMergedTopFaces(
+    GoldbergPlanetSettings settings,
+    DynamicBuffer<GoldbergCell> cells,
+    DynamicBuffer<GoldbergCellVertex> cellVertices,
+    DynamicBuffer<VoxelColumn> columns,
+    DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
+    DynamicBuffer<GoldbergChunkColumn> chunkColumns,
+    NativeList<GoldbergMeshVertex> meshVertices,
+    NativeList<int> meshTriangles,
+    NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup)
+{
+    int maxEdgesPerCell = GoldbergNeighbourConstants.MaxEdgesPerCell;
+
+    int[] cellSurfaceLayers = new int[cells.Length];
+    bool[] cellInChunk = new bool[cells.Length];
+    bool[] visited = new bool[cells.Length];
+
+    for (int i = 0; i < cellSurfaceLayers.Length; i++)
+        cellSurfaceLayers[i] = -1;
+
+    for (int i = 0; i < columns.Length; i++)
+    {
+        VoxelColumn column = columns[i];
+
+        if (column.CellIndex >= 0 && column.CellIndex < cellSurfaceLayers.Length)
+            cellSurfaceLayers[column.CellIndex] = column.SurfaceLayer;
+    }
+
+    for (int i = 0; i < chunkColumns.Length; i++)
+    {
+        int columnIndex = chunkColumns[i].ColumnIndex;
+
+        if (columnIndex < 0 || columnIndex >= columns.Length)
+            continue;
+
+        int cellIndex = columns[columnIndex].CellIndex;
+
+        if (cellIndex >= 0 && cellIndex < cellInChunk.Length)
+            cellInChunk[cellIndex] = true;
+    }
+
+    for (int i = 0; i < chunkColumns.Length; i++)
+    {
+        int columnIndex = chunkColumns[i].ColumnIndex;
+
+        if (columnIndex < 0 || columnIndex >= columns.Length)
+            continue;
+
+        int startCellIndex = columns[columnIndex].CellIndex;
+
+        if (startCellIndex < 0 || startCellIndex >= cells.Length)
+            continue;
+
+        if (visited[startCellIndex])
+            continue;
+
+        int surfaceLayer = cellSurfaceLayers[startCellIndex];
+
+        if (surfaceLayer < 0)
+            continue;
+
+        List<int> regionCells = BuildSameHeightRegion(
+            startCellIndex,
+            surfaceLayer,
+            cellInChunk,
+            visited,
+            cellSurfaceLayers,
+            neighbourLookupBuffer,
+            maxEdgesPerCell
+        );
+
+        if (regionCells.Count == 0)
+            continue;
+
+        bool success = TryAddMergedRegionTopFace(
+            settings,
+            cells,
+            cellVertices,
+            cellSurfaceLayers,
+            neighbourLookupBuffer,
+            regionCells,
+            surfaceLayer,
+            maxEdgesPerCell,
+            meshVertices,
+            meshTriangles,
+            vertexLookup
+        );
+
+        if (!success)
+        {
+            for (int r = 0; r < regionCells.Count; r++)
+            {
+                int cellIndex = regionCells[r];
+                GoldbergCell cell = cells[cellIndex];
+
+                float radius = GetRadiusForLayer(settings, surfaceLayer);
+                Vector3 normal = ((Vector3)cell.Normal).normalized;
+
+                AddFallbackCellTopFace(
+                    cell,
+                    radius,
+                    normal,
+                    cellVertices,
+                    meshVertices,
+                    meshTriangles,
+                    vertexLookup
+                );
+            }
+        }
+    }
+}
+
+        private List<int> BuildSameHeightRegion(
+            int startCellIndex,
+            int surfaceLayer,
+            bool[] cellInChunk,
+            bool[] visited,
+            int[] cellSurfaceLayers,
+            DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
+            int maxEdgesPerCell)
+        {
+            List<int> region = new();
+            Queue<int> queue = new();
+
+            visited[startCellIndex] = true;
+            queue.Enqueue(startCellIndex);
+
+            while (queue.Count > 0)
+            {
+                int cellIndex = queue.Dequeue();
+                region.Add(cellIndex);
+
+                for (int edgeIndex = 0; edgeIndex < maxEdgesPerCell; edgeIndex++)
+                {
+                    int lookupIndex = cellIndex * maxEdgesPerCell + edgeIndex;
+
+                    if (lookupIndex < 0 || lookupIndex >= neighbourLookupBuffer.Length)
+                        continue;
+
+                    int neighbour = neighbourLookupBuffer[lookupIndex].NeighbourCellIndex;
+
+                    if (neighbour < 0 || neighbour >= cellSurfaceLayers.Length)
+                        continue;
+
+                    if (!cellInChunk[neighbour])
+                        continue;
+
+                    if (visited[neighbour])
+                        continue;
+
+                    if (cellSurfaceLayers[neighbour] != surfaceLayer)
+                        continue;
+
+                    visited[neighbour] = true;
+                    queue.Enqueue(neighbour);
+                }
+            }
+
+            return region;
+        }
+
+        private bool TryAddMergedRegionTopFace(
+    GoldbergPlanetSettings settings,
+    DynamicBuffer<GoldbergCell> cells,
+    DynamicBuffer<GoldbergCellVertex> cellVertices,
+    int[] cellSurfaceLayers,
+    DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
+    List<int> regionCells,
+    int surfaceLayer,
+    int maxEdgesPerCell,
+    NativeList<GoldbergMeshVertex> meshVertices,
+    NativeList<int> meshTriangles,
+    NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup)
+        {
+            HashSet<int> regionSet = new(regionCells);
+
+            List<Vector3> boundaryPoints = ExtractOrderedBoundaryPoints(
+                cells,
+                cellVertices,
+                neighbourLookupBuffer,
+                regionSet,
+                maxEdgesPerCell
+            );
+
+            if (boundaryPoints.Count < 3)
+                return false;
+
+            float radius = GetRadiusForLayer(settings, surfaceLayer);
+
+            Vector3 center = Vector3.zero;
+
+            for (int i = 0; i < regionCells.Count; i++)
+            {
+                center += ((Vector3)math.normalize(cells[regionCells[i]].Center));
+            }
+
+            center = (center / regionCells.Count).normalized * radius;
+
+            Vector3 normal = center.normalized;
+
+            List<Vector2> projected = ProjectBoundaryTo2D(boundaryPoints, center, normal, out Vector3 tangent, out Vector3 bitangent);
+
+            List<int> triangulatedIndices = TriangulateEarClipping(projected);
+
+            if (triangulatedIndices.Count < 3)
+                return false;
+
+            List<int> meshPointIndices = new();
+
+            for (int i = 0; i < boundaryPoints.Count; i++)
+            {
+                Vector3 worldPoint = boundaryPoints[i].normalized * radius;
+
+                int vertexIndex = GetOrAddManagedVertex(
+                    new GoldbergMeshVertex
+                    {
+                        Position = worldPoint,
+                        Normal = normal
+                    },
+                    meshVertices,
+                    vertexLookup
+                );
+
+                meshPointIndices.Add(vertexIndex);
+            }
+
+            for (int i = 0; i < triangulatedIndices.Count; i += 3)
+            {
+                int a = meshPointIndices[triangulatedIndices[i]];
+                int b = meshPointIndices[triangulatedIndices[i + 1]];
+                int c = meshPointIndices[triangulatedIndices[i + 2]];
+
+                Vector3 pa = meshVertices[a].Position;
+                Vector3 pb = meshVertices[b].Position;
+                Vector3 pc = meshVertices[c].Position;
+
+                Vector3 triNormal = Vector3.Cross(pb - pa, pc - pa).normalized;
+
+                if (Vector3.Dot(triNormal, normal) >= 0f)
+                {
+                    meshTriangles.Add(a);
+                    meshTriangles.Add(b);
+                    meshTriangles.Add(c);
+                }
+                else
+                {
+                    meshTriangles.Add(a);
+                    meshTriangles.Add(c);
+                    meshTriangles.Add(b);
+                }
+            }
+
+            return true;
+        }
+
+        private List<Vector3> ExtractOrderedBoundaryPoints(
+    DynamicBuffer<GoldbergCell> cells,
+    DynamicBuffer<GoldbergCellVertex> cellVertices,
+    DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
+    HashSet<int> regionSet,
+    int maxEdgesPerCell)
+        {
+            List<Edge> boundaryEdges = new();
+
+            // STEP 1: Collect boundary edges
+            foreach (int cellIndex in regionSet)
+            {
+                GoldbergCell cell = cells[cellIndex];
+
+                for (int edgeIndex = 0; edgeIndex < cell.VertexCount; edgeIndex++)
+                {
+                    int lookupIndex = cellIndex * maxEdgesPerCell + edgeIndex;
+
+                    int neighbour = -1;
+
+                    if (lookupIndex >= 0 && lookupIndex < neighbourLookupBuffer.Length)
+                        neighbour = neighbourLookupBuffer[lookupIndex].NeighbourCellIndex;
+
+                    // If neighbour is inside region → skip (internal edge)
+                    if (neighbour >= 0 && regionSet.Contains(neighbour))
+                        continue;
+
+                    int next = (edgeIndex + 1) % cell.VertexCount;
+
+                    Vector3 a = cellVertices[cell.FirstVertexIndex + edgeIndex].Position;
+                    Vector3 b = cellVertices[cell.FirstVertexIndex + next].Position;
+
+                    boundaryEdges.Add(new Edge { A = a, B = b });
+                }
+            }
+
+            if (boundaryEdges.Count == 0)
+                return new List<Vector3>();
+
+            // STEP 2: Build ordered loop
+            List<Vector3> orderedPoints = new();
+
+            Edge current = boundaryEdges[0];
+            boundaryEdges.RemoveAt(0);
+
+            orderedPoints.Add(current.A);
+            orderedPoints.Add(current.B);
+
+            int guard = 0;
+
+            while (boundaryEdges.Count > 0 && guard < 10000)
+            {
+                bool foundNext = false;
+
+                for (int i = 0; i < boundaryEdges.Count; i++)
+                {
+                    Edge e = boundaryEdges[i];
+
+                    // Match end → start
+                    if ((orderedPoints[^1] - e.A).sqrMagnitude < 0.00001f)
+                    {
+                        orderedPoints.Add(e.B);
+                        boundaryEdges.RemoveAt(i);
+                        foundNext = true;
+                        break;
+                    }
+
+                    // Match end → end (reverse edge)
+                    if ((orderedPoints[^1] - e.B).sqrMagnitude < 0.00001f)
+                    {
+                        orderedPoints.Add(e.A);
+                        boundaryEdges.RemoveAt(i);
+                        foundNext = true;
+                        break;
+                    }
+                }
+
+                if (!foundNext)
+                    break;
+
+                guard++;
+            }
+
+            return orderedPoints;
+        }
+
+        private void AddUniquePoint(List<Vector3> points, Vector3 point)
+        {
+            const float sqrTolerance = 0.00001f;
+
+            for (int i = 0; i < points.Count; i++)
+            {
+                if ((points[i] - point).sqrMagnitude <= sqrTolerance)
+                    return;
+            }
+
+            points.Add(point);
+        }
+
+        private List<Vector2> ProjectBoundaryTo2D(
+            List<Vector3> boundaryPoints,
+            Vector3 center,
+            Vector3 normal,
+            out Vector3 tangent,
+            out Vector3 bitangent)
+        {
+            tangent = Vector3.Cross(normal, Vector3.up);
+
+            if (tangent.sqrMagnitude < 0.0001f)
+                tangent = Vector3.Cross(normal, Vector3.right);
+
+            tangent.Normalize();
+            bitangent = Vector3.Cross(normal, tangent).normalized;
+
+            List<Vector2> result = new();
+
+            for (int i = 0; i < boundaryPoints.Count; i++)
+            {
+                Vector3 p = boundaryPoints[i] - center;
+
+                result.Add(new Vector2(
+                    Vector3.Dot(p, tangent),
+                    Vector3.Dot(p, bitangent)
+                ));
+            }
+
+            return result;
+        }
+
+        private List<int> TriangulateEarClipping(List<Vector2> points)
+        {
+            List<int> result = new();
+
+            if (points.Count < 3)
+                return result;
+
+            List<int> indices = new();
+
+            for (int i = 0; i < points.Count; i++)
+                indices.Add(i);
+
+            if (SignedArea(points) < 0f)
+                indices.Reverse();
+
+            int guard = 0;
+
+            while (indices.Count > 3 && guard < 10000)
+            {
+                bool earFound = false;
+
+                for (int i = 0; i < indices.Count; i++)
+                {
+                    int prevIndex = indices[(i - 1 + indices.Count) % indices.Count];
+                    int currentIndex = indices[i];
+                    int nextIndex = indices[(i + 1) % indices.Count];
+
+                    Vector2 prev = points[prevIndex];
+                    Vector2 current = points[currentIndex];
+                    Vector2 next = points[nextIndex];
+
+                    if (!IsConvex(prev, current, next))
+                        continue;
+
+                    bool containsPoint = false;
+
+                    for (int p = 0; p < indices.Count; p++)
+                    {
+                        int testIndex = indices[p];
+
+                        if (testIndex == prevIndex ||
+                            testIndex == currentIndex ||
+                            testIndex == nextIndex)
+                            continue;
+
+                        if (PointInTriangle(points[testIndex], prev, current, next))
+                        {
+                            containsPoint = true;
+                            break;
+                        }
+                    }
+
+                    if (containsPoint)
+                        continue;
+
+                    result.Add(prevIndex);
+                    result.Add(currentIndex);
+                    result.Add(nextIndex);
+
+                    indices.RemoveAt(i);
+                    earFound = true;
+                    break;
+                }
+
+                if (!earFound)
+                    return new List<int>();
+
+                guard++;
+            }
+
+            if (indices.Count == 3)
+            {
+                result.Add(indices[0]);
+                result.Add(indices[1]);
+                result.Add(indices[2]);
+            }
+
+            return result;
+        }
+
+        private float SignedArea(List<Vector2> points)
+        {
+            float area = 0f;
+
+            for (int i = 0; i < points.Count; i++)
+            {
+                Vector2 a = points[i];
+                Vector2 b = points[(i + 1) % points.Count];
+
+                area += (a.x * b.y) - (b.x * a.y);
+            }
+
+            return area * 0.5f;
+        }
+
+        private bool IsConvex(Vector2 a, Vector2 b, Vector2 c)
+        {
+            Vector2 ab = b - a;
+            Vector2 bc = c - b;
+
+            float cross = ab.x * bc.y - ab.y * bc.x;
+
+            return cross > 0f;
+        }
+
+        private bool PointInTriangle(Vector2 p, Vector2 a, Vector2 b, Vector2 c)
+        {
+            float area = TriangleArea(a, b, c);
+            float area1 = TriangleArea(p, b, c);
+            float area2 = TriangleArea(a, p, c);
+            float area3 = TriangleArea(a, b, p);
+
+            return Mathf.Abs(area - (area1 + area2 + area3)) <= 0.0001f;
+        }
+
+        private float TriangleArea(Vector2 a, Vector2 b, Vector2 c)
+        {
+            return Mathf.Abs(
+                (a.x * (b.y - c.y) +
+                 b.x * (c.y - a.y) +
+                 c.x * (a.y - b.y)) * 0.5f
+            );
+        }
+
+        private void AddFallbackCellTopFace(
+    GoldbergCell cell,
+    float radius,
+    Vector3 normal,
+    DynamicBuffer<GoldbergCellVertex> cellVertices,
+    NativeList<GoldbergMeshVertex> meshVertices,
+    NativeList<int> meshTriangles,
+    NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup)
+        {
+            if (cell.VertexCount < 3)
+                return;
+
+            Vector3 center = Vector3.zero;
+
+            for (int i = 0; i < cell.VertexCount; i++)
+            {
+                Vector3 p = cellVertices[cell.FirstVertexIndex + i].Position;
+                center += p.normalized * radius;
+            }
+
+            center /= cell.VertexCount;
+
+            int centerIndex = GetOrAddManagedVertex(
+                new GoldbergMeshVertex
+                {
+                    Position = center,
+                    Normal = normal
+                },
+                meshVertices,
+                vertexLookup
+            );
+
+            List<int> ringIndices = new();
+
+            for (int i = 0; i < cell.VertexCount; i++)
+            {
+                Vector3 p = cellVertices[cell.FirstVertexIndex + i].Position;
+                Vector3 position = p.normalized * radius;
+
+                int index = GetOrAddManagedVertex(
+                    new GoldbergMeshVertex
+                    {
+                        Position = position,
+                        Normal = normal
+                    },
+                    meshVertices,
+                    vertexLookup
+                );
+
+                ringIndices.Add(index);
+            }
+
+            for (int i = 0; i < cell.VertexCount; i++)
+            {
+                int next = (i + 1) % cell.VertexCount;
+
+                meshTriangles.Add(centerIndex);
+                meshTriangles.Add(ringIndices[i]);
+                meshTriangles.Add(ringIndices[next]);
+            }
+        }
+
+        private int GetOrAddManagedVertex(
+            GoldbergMeshVertex vertex,
+            NativeList<GoldbergMeshVertex> meshVertices,
+            NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup)
+        {
+            GoldbergMeshVertexKey key = new GoldbergMeshVertexKey(vertex);
+
+            if (vertexLookup.TryGetValue(key, out int existingIndex))
+                return existingIndex;
+
+            int newIndex = meshVertices.Length;
+            meshVertices.Add(vertex);
+            vertexLookup.TryAdd(key, newIndex);
+
+            return newIndex;
+        }
+
+        private float GetRadiusForLayer(GoldbergPlanetSettings settings, int layer)
+        {
+            return settings.Radius +
+                   ((layer - settings.Layers / 2f) * settings.CellHeight);
         }
     }
 }
