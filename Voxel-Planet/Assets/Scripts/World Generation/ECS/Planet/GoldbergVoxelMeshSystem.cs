@@ -17,12 +17,33 @@ namespace VoxelPlanet
         private const int MaxColliderUpdatesPerFrame = 1;
 
         private readonly Queue<PendingChunkCollider> pendingColliders = new();
+        private readonly List<PendingChunkBuild> pendingBuilds = new();
 
         private struct PendingChunkCollider
         {
             public Entity ChunkEntity;
             public int ChunkIndex;
-            public Mesh Mesh;
+            public Mesh ColliderMesh;
+        }
+
+        private struct PendingChunkBuild
+        {
+            public Entity ChunkEntity;
+            public int ChunkIndex;
+            public Mesh ColliderMesh;
+
+            public JobHandle Handle;
+
+            public NativeList<GoldbergMeshVertex> Vertices;
+            public NativeList<int> Triangles;
+            public NativeParallelHashMap<GoldbergMeshVertexKey, int> VertexLookup;
+
+            public NativeArray<GoldbergCell> Cells;
+            public NativeArray<GoldbergCellVertex> CellVertices;
+            public NativeArray<VoxelColumn> Columns;
+            public NativeArray<int> CellSurfaceLayers;
+            public NativeArray<int> NeighbourLookup;
+            public NativeArray<int> ChunkColumnIndices;
         }
 
         private struct Edge
@@ -49,6 +70,7 @@ namespace VoxelPlanet
         {
             EntityManager entityManager = EntityManager;
 
+            CompletePendingBuilds(entityManager);
             ProcessPendingColliders(entityManager);
 
             EntityQuery query = GetEntityQuery(
@@ -59,7 +81,7 @@ namespace VoxelPlanet
             using NativeArray<Entity> chunkEntities =
                 query.ToEntityArray(Allocator.Temp);
 
-            int builtThisFrame = 0;
+            int scheduledThisFrame = 0;
 
             for (int i = 0; i < chunkEntities.Length; i++)
             {
@@ -73,6 +95,9 @@ namespace VoxelPlanet
                     entityManager.RemoveComponent<GoldbergVoxelChunkNeedsMeshBuild>(chunkEntity);
                     continue;
                 }
+
+                if (IsChunkAlreadyPending(chunkEntity))
+                    continue;
 
                 if (!entityManager.Exists(chunk.PlanetEntity))
                 {
@@ -101,8 +126,6 @@ namespace VoxelPlanet
                 DynamicBuffer<GoldbergChunkColumn> chunkColumns =
                     entityManager.GetBuffer<GoldbergChunkColumn>(chunkEntity);
 
-                int chunkColumnCount = chunkColumns.Length;
-
                 DrawRegionBoundaryDebug(
                     cells,
                     cellVertices,
@@ -111,90 +134,44 @@ namespace VoxelPlanet
                     chunkColumns
                 );
 
-                Mesh mesh = BuildVoxelChunkMesh(
+                ScheduleVoxelChunkMeshBuild(
+                    chunkEntity,
+                    chunk,
                     settings,
                     cells,
                     cellVertices,
                     columns,
                     neighbourLookup,
-                    chunkColumns,
-                    chunk.ChunkIndex
+                    chunkColumns
                 );
 
-                GoldbergChunkMeshCache.Set(chunk.ChunkIndex, mesh);     
+                scheduledThisFrame++;
 
-                pendingColliders.Enqueue(new PendingChunkCollider
-                {
-                    ChunkEntity = chunkEntity,
-                    ChunkIndex = chunk.ChunkIndex,
-                    Mesh = mesh
-                });
-
-                Debug.Log(
-                    $"[MESH] Chunk {chunk.ChunkIndex} vertices: {mesh.vertexCount}, " +
-                    $"bounds center: {mesh.bounds.center}, size: {mesh.bounds.size}"
-                );
-
-                
-
-                int vertexCount = mesh.vertexCount;
-
-                RenderMeshArray renderMeshArray = new RenderMeshArray(
-                    new[] { grassMaterial },
-                    new[] { mesh }
-                );
-
-                RenderMeshDescription desc = new RenderMeshDescription(
-                    shadowCastingMode: ShadowCastingMode.On,
-                    receiveShadows: true
-                );
-
-                if (!entityManager.HasComponent<LocalTransform>(chunkEntity))
-                {
-                    entityManager.AddComponentData(chunkEntity, LocalTransform.Identity);
-                }
-
-                if (entityManager.HasComponent<MaterialMeshInfo>(chunkEntity))
-                {
-                    entityManager.RemoveComponent<MaterialMeshInfo>(chunkEntity);
-                }
-
-                RenderMeshUtility.AddComponents(
-                    chunkEntity,
-                    entityManager,
-                    desc,
-                    renderMeshArray,
-                    MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
-                );
-
-                chunk.NeedsMeshBuild = 0;
-                chunk.IsMeshBuilt = 1;
-
-                if(entityManager.HasComponent<DisableRendering>(chunkEntity))
-                {
-                    entityManager.RemoveComponent<DisableRendering>(chunkEntity);
-                }
-                
-                entityManager.SetComponentData(chunkEntity, chunk);
-                entityManager.RemoveComponent<GoldbergVoxelChunkNeedsMeshBuild>(chunkEntity);
-
-                //Debug.Log( $"Goldberg spatial chunk {chunk.ChunkIndex} mesh built. Vertices: {vertexCount}, Columns: {chunkColumnCount}";
-
-                builtThisFrame++;
-
-                if (builtThisFrame >= MaxChunkBuildsPerFrame)
+                if (scheduledThisFrame >= MaxChunkBuildsPerFrame)
                     break;
             }
         }
 
-        private Mesh BuildVoxelChunkMesh(
+        private bool IsChunkAlreadyPending(Entity chunkEntity)
+        {
+            for (int i = 0; i < pendingBuilds.Count; i++)
+            {
+                if (pendingBuilds[i].ChunkEntity == chunkEntity)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private void ScheduleVoxelChunkMeshBuild(
+            Entity chunkEntity,
+            GoldbergVoxelChunk chunk,
             GoldbergPlanetSettings settings,
             DynamicBuffer<GoldbergCell> cells,
             DynamicBuffer<GoldbergCellVertex> cellVertices,
             DynamicBuffer<VoxelColumn> columns,
             DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
-            DynamicBuffer<GoldbergChunkColumn> chunkColumns,
-            int chunkIndex)
+            DynamicBuffer<GoldbergChunkColumn> chunkColumns)
         {
             NativeArray<GoldbergCell> cellsArray =
                 new NativeArray<GoldbergCell>(cells.Length, Allocator.TempJob);
@@ -263,6 +240,18 @@ namespace VoxelPlanet
                     Allocator.TempJob
                 );
 
+            AddMergedTopFaces(
+                settings,
+                cells,
+                cellVertices,
+                columns,
+                neighbourLookupBuffer,
+                chunkColumns,
+                meshVertices,
+                meshTriangles,
+                vertexLookup
+            );
+
             GoldbergVoxelMeshBuildJob job = new GoldbergVoxelMeshBuildJob
             {
                 Settings = settings,
@@ -281,81 +270,174 @@ namespace VoxelPlanet
             };
 
             JobHandle handle = job.Schedule();
-            handle.Complete();
 
-            AddMergedTopFaces(
-                settings,
-                cells,
-                cellVertices,
-                columns,
-                neighbourLookupBuffer,
-                chunkColumns,
-                meshVertices,
-                meshTriangles,
-                vertexLookup
-            );
+            pendingBuilds.Add(new PendingChunkBuild
+            {
+                ChunkEntity = chunkEntity,
+                ChunkIndex = chunk.ChunkIndex,
+                Handle = handle,
 
-            Mesh mesh = new Mesh();
-            mesh.name = $"Goldberg Voxel Spatial Chunk {chunkIndex}";
-            mesh.indexFormat = IndexFormat.UInt32;
+                Vertices = meshVertices,
+                Triangles = meshTriangles,
+                VertexLookup = vertexLookup,
 
-            mesh.SetVertexBufferParams(
-                meshVertices.Length,
-                new VertexAttributeDescriptor(
-                    VertexAttribute.Position,
-                    VertexAttributeFormat.Float32,
-                    3
-                ),
-                new VertexAttributeDescriptor(
-                    VertexAttribute.Normal,
-                    VertexAttributeFormat.Float32,
-                    3
-                )
-            );
+                Cells = cellsArray,
+                CellVertices = cellVerticesArray,
+                Columns = columnsArray,
+                CellSurfaceLayers = cellSurfaceLayers,
+                NeighbourLookup = neighbourLookup,
+                ChunkColumnIndices = chunkColumnIndices
+            });
+        }
 
-            mesh.SetVertexBufferData(
-                meshVertices.AsArray(),
-                0,
-                0,
-                meshVertices.Length
-            );
+        private void CompletePendingBuilds(EntityManager entityManager)
+        {
+            for (int i = pendingBuilds.Count - 1; i >= 0; i--)
+            {
+                PendingChunkBuild pending = pendingBuilds[i];
 
-            mesh.SetIndexBufferParams(
-                meshTriangles.Length,
-                mesh.indexFormat
-            );
+                if (!pending.Handle.IsCompleted)
+                    continue;
 
-            mesh.SetIndexBufferData(
-                meshTriangles.AsArray(),
-                0,
-                0,
-                meshTriangles.Length
-            );
+                pending.Handle.Complete();
 
-            mesh.SetSubMesh(
-                0,
-                new SubMeshDescriptor(0, meshTriangles.Length)
-            );
+                if (!entityManager.Exists(pending.ChunkEntity))
+                {
+                    DisposePendingBuild(pending);
+                    pendingBuilds.RemoveAt(i);
+                    continue;
+                }
 
-            mesh.RecalculateBounds();
-            mesh.UploadMeshData(false);
+                Mesh mesh = new Mesh();
+                Mesh colliderMesh = BuildColliderMesh(
+                    pending.Vertices,
+                    pending.Triangles,
+                    pending.ChunkIndex
+                );
+                mesh.name = $"Goldberg Voxel Spatial Chunk {pending.ChunkIndex}";
+                mesh.indexFormat = IndexFormat.UInt32;
 
-            Debug.Log(
-                   $"[MESH] Finalized chunk {chunkIndex} mesh. Vertices: {mesh.vertexCount}, " +
-                   $"bounds center: {mesh.bounds.center}, size: {mesh.bounds.size}"
+                mesh.SetVertexBufferParams(
+                    pending.Vertices.Length,
+                    new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3),
+                    new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3)
                 );
 
-            vertexLookup.Dispose();
-            meshTriangles.Dispose();
-            meshVertices.Dispose();
-            neighbourLookup.Dispose();
-            cellSurfaceLayers.Dispose();
-            chunkColumnIndices.Dispose();
-            columnsArray.Dispose();
-            cellVerticesArray.Dispose();
-            cellsArray.Dispose();
+                mesh.SetVertexBufferData(
+                    pending.Vertices.AsArray(),
+                    0,
+                    0,
+                    pending.Vertices.Length
+                );
 
-            return mesh;
+                mesh.SetIndexBufferParams(
+                    pending.Triangles.Length,
+                    mesh.indexFormat
+                );
+
+                mesh.SetIndexBufferData(
+                    pending.Triangles.AsArray(),
+                    0,
+                    0,
+                    pending.Triangles.Length
+                );
+
+                mesh.SetSubMesh(
+                    0,
+                    new SubMeshDescriptor(0, pending.Triangles.Length)
+                );
+
+                mesh.RecalculateBounds();
+                mesh.UploadMeshData(false);
+
+                GoldbergChunkMeshCache.Set(pending.ChunkIndex, mesh);
+
+                RenderMeshArray renderMeshArray = new RenderMeshArray(
+                    new[] { grassMaterial },
+                    new[] { mesh }
+                );
+
+                RenderMeshDescription desc = new RenderMeshDescription(
+                    shadowCastingMode: ShadowCastingMode.On,
+                    receiveShadows: true
+                );
+
+                if (entityManager.HasComponent<MaterialMeshInfo>(pending.ChunkEntity))
+                {
+                    entityManager.RemoveComponent<MaterialMeshInfo>(pending.ChunkEntity);
+                }
+
+                RenderMeshUtility.AddComponents(
+                    pending.ChunkEntity,
+                    entityManager,
+                    desc,
+                    renderMeshArray,
+                    MaterialMeshInfo.FromRenderMeshArrayIndices(0, 0)
+                );
+
+                pendingColliders.Enqueue(new PendingChunkCollider
+                {
+                    ChunkEntity = pending.ChunkEntity,
+                    ChunkIndex = pending.ChunkIndex,
+                    ColliderMesh = colliderMesh
+                });
+
+                GoldbergVoxelChunk chunk =
+                    entityManager.GetComponentData<GoldbergVoxelChunk>(pending.ChunkEntity);
+
+                chunk.NeedsMeshBuild = 0;
+                chunk.IsMeshBuilt = 1;
+
+                if (entityManager.HasComponent<DisableRendering>(pending.ChunkEntity))
+                {
+                    entityManager.RemoveComponent<DisableRendering>(pending.ChunkEntity);
+                }
+
+                entityManager.SetComponentData(pending.ChunkEntity, chunk);
+
+                if (entityManager.HasComponent<GoldbergVoxelChunkNeedsMeshBuild>(pending.ChunkEntity))
+                {
+                    entityManager.RemoveComponent<GoldbergVoxelChunkNeedsMeshBuild>(pending.ChunkEntity);
+                }
+
+                Debug.Log(
+                    $"[ASYNC MESH] Chunk {pending.ChunkIndex} vertices: {mesh.vertexCount}, " +
+                    $"bounds center: {mesh.bounds.center}, size: {mesh.bounds.size}"
+                );
+
+                DisposePendingBuild(pending);
+                pendingBuilds.RemoveAt(i);
+            }
+        }
+
+        private void DisposePendingBuild(PendingChunkBuild pending)
+        {
+            if (pending.VertexLookup.IsCreated)
+                pending.VertexLookup.Dispose();
+
+            if (pending.Triangles.IsCreated)
+                pending.Triangles.Dispose();
+
+            if (pending.Vertices.IsCreated)
+                pending.Vertices.Dispose();
+
+            if (pending.NeighbourLookup.IsCreated)
+                pending.NeighbourLookup.Dispose();
+
+            if (pending.CellSurfaceLayers.IsCreated)
+                pending.CellSurfaceLayers.Dispose();
+
+            if (pending.ChunkColumnIndices.IsCreated)
+                pending.ChunkColumnIndices.Dispose();
+
+            if (pending.Columns.IsCreated)
+                pending.Columns.Dispose();
+
+            if (pending.CellVertices.IsCreated)
+                pending.CellVertices.Dispose();
+
+            if (pending.Cells.IsCreated)
+                pending.Cells.Dispose();
         }
 
         private void ProcessPendingColliders(EntityManager entityManager)
@@ -383,7 +465,7 @@ namespace VoxelPlanet
 
                 GoldbergChunkColliderBridge.SetChunkCollider(
                     pending.ChunkIndex,
-                    pending.Mesh
+                    pending.ColliderMesh
                 );
 
                 processed++;
@@ -391,11 +473,11 @@ namespace VoxelPlanet
         }
 
         private void DrawRegionBoundaryDebug(
-    DynamicBuffer<GoldbergCell> cells,
-    DynamicBuffer<GoldbergCellVertex> cellVertices,
-    DynamicBuffer<VoxelColumn> columns,
-    DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
-    DynamicBuffer<GoldbergChunkColumn> chunkColumns)
+            DynamicBuffer<GoldbergCell> cells,
+            DynamicBuffer<GoldbergCellVertex> cellVertices,
+            DynamicBuffer<VoxelColumn> columns,
+            DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
+            DynamicBuffer<GoldbergChunkColumn> chunkColumns)
         {
             int maxEdgesPerCell = GoldbergNeighbourConstants.MaxEdgesPerCell;
 
@@ -441,7 +523,6 @@ namespace VoxelPlanet
                     if (neighbourCellIndex >= 0 && neighbourCellIndex < cellSurfaceLayers.Length)
                         neighbourSurfaceLayer = cellSurfaceLayers[neighbourCellIndex];
 
-                    // Same-height neighbour = internal edge, not region boundary.
                     if (neighbourSurfaceLayer == surfaceLayer)
                         continue;
 
@@ -456,116 +537,116 @@ namespace VoxelPlanet
         }
 
         private void AddMergedTopFaces(
-    GoldbergPlanetSettings settings,
-    DynamicBuffer<GoldbergCell> cells,
-    DynamicBuffer<GoldbergCellVertex> cellVertices,
-    DynamicBuffer<VoxelColumn> columns,
-    DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
-    DynamicBuffer<GoldbergChunkColumn> chunkColumns,
-    NativeList<GoldbergMeshVertex> meshVertices,
-    NativeList<int> meshTriangles,
-    NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup)
-{
-    int maxEdgesPerCell = GoldbergNeighbourConstants.MaxEdgesPerCell;
-
-    int[] cellSurfaceLayers = new int[cells.Length];
-    bool[] cellInChunk = new bool[cells.Length];
-    bool[] visited = new bool[cells.Length];
-
-    for (int i = 0; i < cellSurfaceLayers.Length; i++)
-        cellSurfaceLayers[i] = -1;
-
-    for (int i = 0; i < columns.Length; i++)
-    {
-        VoxelColumn column = columns[i];
-
-        if (column.CellIndex >= 0 && column.CellIndex < cellSurfaceLayers.Length)
-            cellSurfaceLayers[column.CellIndex] = column.SurfaceLayer;
-    }
-
-    for (int i = 0; i < chunkColumns.Length; i++)
-    {
-        int columnIndex = chunkColumns[i].ColumnIndex;
-
-        if (columnIndex < 0 || columnIndex >= columns.Length)
-            continue;
-
-        int cellIndex = columns[columnIndex].CellIndex;
-
-        if (cellIndex >= 0 && cellIndex < cellInChunk.Length)
-            cellInChunk[cellIndex] = true;
-    }
-
-    for (int i = 0; i < chunkColumns.Length; i++)
-    {
-        int columnIndex = chunkColumns[i].ColumnIndex;
-
-        if (columnIndex < 0 || columnIndex >= columns.Length)
-            continue;
-
-        int startCellIndex = columns[columnIndex].CellIndex;
-
-        if (startCellIndex < 0 || startCellIndex >= cells.Length)
-            continue;
-
-        if (visited[startCellIndex])
-            continue;
-
-        int surfaceLayer = cellSurfaceLayers[startCellIndex];
-
-        if (surfaceLayer < 0)
-            continue;
-
-        List<int> regionCells = BuildSameHeightRegion(
-            startCellIndex,
-            surfaceLayer,
-            cellInChunk,
-            visited,
-            cellSurfaceLayers,
-            neighbourLookupBuffer,
-            maxEdgesPerCell
-        );
-
-        if (regionCells.Count == 0)
-            continue;
-
-        bool success = TryAddMergedRegionTopFace(
-            settings,
-            cells,
-            cellVertices,
-            cellSurfaceLayers,
-            neighbourLookupBuffer,
-            regionCells,
-            surfaceLayer,
-            maxEdgesPerCell,
-            meshVertices,
-            meshTriangles,
-            vertexLookup
-        );
-
-        if (!success)
+            GoldbergPlanetSettings settings,
+            DynamicBuffer<GoldbergCell> cells,
+            DynamicBuffer<GoldbergCellVertex> cellVertices,
+            DynamicBuffer<VoxelColumn> columns,
+            DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
+            DynamicBuffer<GoldbergChunkColumn> chunkColumns,
+            NativeList<GoldbergMeshVertex> meshVertices,
+            NativeList<int> meshTriangles,
+            NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup)
         {
-            for (int r = 0; r < regionCells.Count; r++)
+            int maxEdgesPerCell = GoldbergNeighbourConstants.MaxEdgesPerCell;
+
+            int[] cellSurfaceLayers = new int[cells.Length];
+            bool[] cellInChunk = new bool[cells.Length];
+            bool[] visited = new bool[cells.Length];
+
+            for (int i = 0; i < cellSurfaceLayers.Length; i++)
+                cellSurfaceLayers[i] = -1;
+
+            for (int i = 0; i < columns.Length; i++)
             {
-                int cellIndex = regionCells[r];
-                GoldbergCell cell = cells[cellIndex];
+                VoxelColumn column = columns[i];
 
-                float radius = GetRadiusForLayer(settings, surfaceLayer);
-                Vector3 normal = ((Vector3)cell.Normal).normalized;
+                if (column.CellIndex >= 0 && column.CellIndex < cellSurfaceLayers.Length)
+                    cellSurfaceLayers[column.CellIndex] = column.SurfaceLayer;
+            }
 
-                AddFallbackCellTopFace(
-                    cell,
-                    radius,
-                    normal,
+            for (int i = 0; i < chunkColumns.Length; i++)
+            {
+                int columnIndex = chunkColumns[i].ColumnIndex;
+
+                if (columnIndex < 0 || columnIndex >= columns.Length)
+                    continue;
+
+                int cellIndex = columns[columnIndex].CellIndex;
+
+                if (cellIndex >= 0 && cellIndex < cellInChunk.Length)
+                    cellInChunk[cellIndex] = true;
+            }
+
+            for (int i = 0; i < chunkColumns.Length; i++)
+            {
+                int columnIndex = chunkColumns[i].ColumnIndex;
+
+                if (columnIndex < 0 || columnIndex >= columns.Length)
+                    continue;
+
+                int startCellIndex = columns[columnIndex].CellIndex;
+
+                if (startCellIndex < 0 || startCellIndex >= cells.Length)
+                    continue;
+
+                if (visited[startCellIndex])
+                    continue;
+
+                int surfaceLayer = cellSurfaceLayers[startCellIndex];
+
+                if (surfaceLayer < 0)
+                    continue;
+
+                List<int> regionCells = BuildSameHeightRegion(
+                    startCellIndex,
+                    surfaceLayer,
+                    cellInChunk,
+                    visited,
+                    cellSurfaceLayers,
+                    neighbourLookupBuffer,
+                    maxEdgesPerCell
+                );
+
+                if (regionCells.Count == 0)
+                    continue;
+
+                bool success = TryAddMergedRegionTopFace(
+                    settings,
+                    cells,
                     cellVertices,
+                    cellSurfaceLayers,
+                    neighbourLookupBuffer,
+                    regionCells,
+                    surfaceLayer,
+                    maxEdgesPerCell,
                     meshVertices,
                     meshTriangles,
                     vertexLookup
                 );
+
+                if (!success)
+                {
+                    for (int r = 0; r < regionCells.Count; r++)
+                    {
+                        int cellIndex = regionCells[r];
+                        GoldbergCell cell = cells[cellIndex];
+
+                        float radius = GetRadiusForLayer(settings, surfaceLayer);
+                        Vector3 normal = ((Vector3)cell.Normal).normalized;
+
+                        AddFallbackCellTopFace(
+                            cell,
+                            radius,
+                            normal,
+                            cellVertices,
+                            meshVertices,
+                            meshTriangles,
+                            vertexLookup
+                        );
+                    }
+                }
             }
         }
-    }
-}
 
         private List<int> BuildSameHeightRegion(
             int startCellIndex,
@@ -617,17 +698,17 @@ namespace VoxelPlanet
         }
 
         private bool TryAddMergedRegionTopFace(
-    GoldbergPlanetSettings settings,
-    DynamicBuffer<GoldbergCell> cells,
-    DynamicBuffer<GoldbergCellVertex> cellVertices,
-    int[] cellSurfaceLayers,
-    DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
-    List<int> regionCells,
-    int surfaceLayer,
-    int maxEdgesPerCell,
-    NativeList<GoldbergMeshVertex> meshVertices,
-    NativeList<int> meshTriangles,
-    NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup)
+            GoldbergPlanetSettings settings,
+            DynamicBuffer<GoldbergCell> cells,
+            DynamicBuffer<GoldbergCellVertex> cellVertices,
+            int[] cellSurfaceLayers,
+            DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
+            List<int> regionCells,
+            int surfaceLayer,
+            int maxEdgesPerCell,
+            NativeList<GoldbergMeshVertex> meshVertices,
+            NativeList<int> meshTriangles,
+            NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup)
         {
             HashSet<int> regionSet = new(regionCells);
 
@@ -648,14 +729,15 @@ namespace VoxelPlanet
 
             for (int i = 0; i < regionCells.Count; i++)
             {
-                center += ((Vector3)math.normalize(cells[regionCells[i]].Center));
+                center += (Vector3)math.normalize(cells[regionCells[i]].Center);
             }
 
             center = (center / regionCells.Count).normalized * radius;
 
             Vector3 normal = center.normalized;
 
-            List<Vector2> projected = ProjectBoundaryTo2D(boundaryPoints, center, normal, out Vector3 tangent, out Vector3 bitangent);
+            List<Vector2> projected =
+                ProjectBoundaryTo2D(boundaryPoints, center, normal, out _, out _);
 
             List<int> triangulatedIndices = TriangulateEarClipping(projected);
 
@@ -711,15 +793,14 @@ namespace VoxelPlanet
         }
 
         private List<Vector3> ExtractOrderedBoundaryPoints(
-    DynamicBuffer<GoldbergCell> cells,
-    DynamicBuffer<GoldbergCellVertex> cellVertices,
-    DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
-    HashSet<int> regionSet,
-    int maxEdgesPerCell)
+            DynamicBuffer<GoldbergCell> cells,
+            DynamicBuffer<GoldbergCellVertex> cellVertices,
+            DynamicBuffer<GoldbergCellNeighbourLookup> neighbourLookupBuffer,
+            HashSet<int> regionSet,
+            int maxEdgesPerCell)
         {
             List<Edge> boundaryEdges = new();
 
-            // STEP 1: Collect boundary edges
             foreach (int cellIndex in regionSet)
             {
                 GoldbergCell cell = cells[cellIndex];
@@ -733,7 +814,6 @@ namespace VoxelPlanet
                     if (lookupIndex >= 0 && lookupIndex < neighbourLookupBuffer.Length)
                         neighbour = neighbourLookupBuffer[lookupIndex].NeighbourCellIndex;
 
-                    // If neighbour is inside region → skip (internal edge)
                     if (neighbour >= 0 && regionSet.Contains(neighbour))
                         continue;
 
@@ -749,7 +829,6 @@ namespace VoxelPlanet
             if (boundaryEdges.Count == 0)
                 return new List<Vector3>();
 
-            // STEP 2: Build ordered loop
             List<Vector3> orderedPoints = new();
 
             Edge current = boundaryEdges[0];
@@ -768,7 +847,6 @@ namespace VoxelPlanet
                 {
                     Edge e = boundaryEdges[i];
 
-                    // Match end → start
                     if ((orderedPoints[^1] - e.A).sqrMagnitude < 0.00001f)
                     {
                         orderedPoints.Add(e.B);
@@ -777,7 +855,6 @@ namespace VoxelPlanet
                         break;
                     }
 
-                    // Match end → end (reverse edge)
                     if ((orderedPoints[^1] - e.B).sqrMagnitude < 0.00001f)
                     {
                         orderedPoints.Add(e.A);
@@ -794,19 +871,6 @@ namespace VoxelPlanet
             }
 
             return orderedPoints;
-        }
-
-        private void AddUniquePoint(List<Vector3> points, Vector3 point)
-        {
-            const float sqrTolerance = 0.00001f;
-
-            for (int i = 0; i < points.Count; i++)
-            {
-                if ((points[i] - point).sqrMagnitude <= sqrTolerance)
-                    return;
-            }
-
-            points.Add(point);
         }
 
         private List<Vector2> ProjectBoundaryTo2D(
@@ -964,13 +1028,13 @@ namespace VoxelPlanet
         }
 
         private void AddFallbackCellTopFace(
-    GoldbergCell cell,
-    float radius,
-    Vector3 normal,
-    DynamicBuffer<GoldbergCellVertex> cellVertices,
-    NativeList<GoldbergMeshVertex> meshVertices,
-    NativeList<int> meshTriangles,
-    NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup)
+            GoldbergCell cell,
+            float radius,
+            Vector3 normal,
+            DynamicBuffer<GoldbergCellVertex> cellVertices,
+            NativeList<GoldbergMeshVertex> meshVertices,
+            NativeList<int> meshTriangles,
+            NativeParallelHashMap<GoldbergMeshVertexKey, int> vertexLookup)
         {
             if (cell.VertexCount < 3)
                 return;
@@ -1046,6 +1110,77 @@ namespace VoxelPlanet
         {
             return settings.Radius +
                    ((layer - settings.Layers / 2f) * settings.CellHeight);
+        }
+
+        private Mesh BuildColliderMesh(
+            NativeList<GoldbergMeshVertex> renderVertices,
+            NativeList<int> renderTriangles,
+            int chunkIndex)
+        {
+            Dictionary<Vector3Int, int> vertexLookup = new();
+            List<Vector3> colliderVertices = new();
+            List<int> colliderTriangles = new();
+
+            const float precision = 10000f;
+
+            for (int i = 0; i < renderTriangles.Length; i += 3)
+            {
+                int r0 = renderTriangles[i];
+                int r1 = renderTriangles[i + 1];
+                int r2 = renderTriangles[i + 2];
+
+                Vector3 p0 = renderVertices[r0].Position;
+                Vector3 p1 = renderVertices[r1].Position;
+                Vector3 p2 = renderVertices[r2].Position;
+
+                int c0 = GetOrAddColliderVertex(p0, precision, vertexLookup, colliderVertices);
+                int c1 = GetOrAddColliderVertex(p1, precision, vertexLookup, colliderVertices);
+                int c2 = GetOrAddColliderVertex(p2, precision, vertexLookup, colliderVertices);
+
+                if (c0 == c1 || c1 == c2 || c2 == c0)
+                    continue;
+
+                colliderTriangles.Add(c0);
+                colliderTriangles.Add(c1);
+                colliderTriangles.Add(c2);
+            }
+
+            Mesh colliderMesh = new Mesh();
+            colliderMesh.name = $"Goldberg Collider Mesh {chunkIndex}";
+            colliderMesh.indexFormat = IndexFormat.UInt32;
+
+            colliderMesh.SetVertices(colliderVertices);
+            colliderMesh.SetTriangles(colliderTriangles, 0);
+            colliderMesh.RecalculateBounds();
+
+            Debug.Log(
+                $"[COLLIDER MESH] Chunk {chunkIndex} render verts: {renderVertices.Length}, " +
+                $"collider verts: {colliderVertices.Count}, tris: {colliderTriangles.Count / 3}"
+            );
+
+            return colliderMesh;
+        }
+
+        private int GetOrAddColliderVertex(
+            Vector3 position,
+            float precision,
+            Dictionary<Vector3Int, int> lookup,
+            List<Vector3> vertices)
+        {
+            Vector3Int key = new Vector3Int(
+                Mathf.RoundToInt(position.x * precision),
+                Mathf.RoundToInt(position.y * precision),
+                Mathf.RoundToInt(position.z * precision)
+            );
+
+            if (lookup.TryGetValue(key, out int index))
+                return index;
+
+            index = vertices.Count;
+            vertices.Add(position);
+            lookup.Add(key, index);
+
+            return index;
         }
     }
 }

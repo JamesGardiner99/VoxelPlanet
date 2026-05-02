@@ -167,11 +167,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 01eff7d004a390d4ebfb76a19810656f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  Radius: 100
-  CellHeight: 1
+  Radius: 1000
+  CellHeight: 2
   Subdivisions: 7
-  Layers: 16
-  OceanLevel: 8
+  Layers: 32
+  OceanLevel: 16
   Seed: 12345
   GenerateOnStart: 1
 --- !u!1660057539 &9223372036854775807

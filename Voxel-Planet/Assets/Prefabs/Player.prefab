@@ -14,6 +14,7 @@ GameObject:
   - component: {fileID: 9153311522023884054}
   - component: {fileID: 6055068379490475220}
   - component: {fileID: 7906258771270157602}
+  - component: {fileID: 7395429031132212953}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -30,7 +31,7 @@ Transform:
   m_GameObject: {fileID: 5338756901348156815}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 21.35361, y: 196.98064, z: -169.7669}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -161,12 +162,24 @@ MonoBehaviour:
   groundMask:
     serializedVersion: 2
     m_Bits: 0
-  cameraPivot: {fileID: 0}
+  cameraPivot: {fileID: 2595412106297206520}
   mouseSensitivity: 200
   maxLookAngle: 80
   usePlanetTransform: 0
   planetTransform: {fileID: 0}
   planetCenter: {x: 0, y: 0, z: 0}
+--- !u!114 &7395429031132212953
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5338756901348156815}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6c3bc21ccf0b3ba4ca9d683f8d2786bd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &8095143130517935979
 GameObject:
   m_ObjectHideFlags: 0

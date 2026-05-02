@@ -10,9 +10,9 @@ namespace VoxelPlanet
     [UpdateAfter(typeof(GoldbergVoxelGenerationSystem))]
     public partial class GoldbergChunkStreamingSystem : SystemBase
     {
-        private const float LoadDistance = 115f;
-        private const float PreloadMultiplier = 1.1f;
-        private const float UnloadMultiplier = 1.2f;
+        private const float LoadDistance = 220f;
+        private const float PreloadMultiplier = 1.4f;
+        private const float UnloadMultiplier = 1.9f;
 
         private const float PreloadDistance = LoadDistance * PreloadMultiplier;
         private const float UnloadDistance = LoadDistance * UnloadMultiplier;

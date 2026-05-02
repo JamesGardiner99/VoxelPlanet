@@ -8,12 +8,16 @@ namespace VoxelPlanet
         public static bool HasPlayer;
         public static float3 Position;
 
+        public static void SetPreloadPosition(float3 position)
+        {
+            Position = position;
+            HasPlayer = true;
+        }
+
         private void LateUpdate()
         {
             Position = transform.position;
             HasPlayer = true;
-
-            Debug.Log($"[BRIDGE] Player world position: {Position}");
         }
 
         private void OnDisable()
